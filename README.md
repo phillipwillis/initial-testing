@@ -10,9 +10,11 @@ Milestone 1 of the §10 build order is done: the domain model, the §4 markup pa
 serializer, the read-time estimator, and the §5 rule engine. **No LLM, no network.**
 Collection, grading, slotting, script generation, and the Inception adapter are still ahead.
 
-Read [CLAUDE.md §13](CLAUDE.md#13-implementation-notes-milestone-1) before extending any of
-this — it lists the markup this build invented, the constants it had to guess at, and the
-questions the guessing raised.
+The §11 questions were answered on 2026-08-27, so the engine enforces the real anchor pattern,
+studio shots, 39-character CG ceiling and monitor rule rather than placeholders. Three items
+remain open — see [§11.20](CLAUDE.md#1120-still-outstanding) — and none of them block the next
+milestone. [§13](CLAUDE.md#13-implementation-notes-milestone-1) covers the markup this build
+invented and what it still assumes.
 
 ## Layout
 
@@ -42,15 +44,15 @@ python3 -m newscast readtime --text "VENDORS CLOSE UP SHOP AT TWO."
 `validate` exits non-zero when anything would break on air, so it drops straight into CI or a
 pre-submit hook.
 
-Answers to the open questions in §11 can be tried without touching code:
+The §11 answers live in `newscast/config.py`. These flags override them for a what-if without
+editing code:
 
 ```bash
-python3 -m newscast validate rundown.txt \
-    --budget 1A=420 --anchors 1A=MEGAN,JAY --shot 1A=CAM1 --cg-ceiling 38 --wpm 165
+python3 -m newscast validate rundown.txt --budget 1B=300 --cg-ceiling 42 --wpm 170
 ```
 
-Rules that depend on an unanswered question report `INFO ... not configured` rather than
-enforcing an invented threshold.
+The rules that still depend on an unanswered question — the half-hour clock, the bump CG
+ceiling — report `INFO ... not configured` rather than enforcing an invented threshold.
 
 ## Tests
 
@@ -58,7 +60,8 @@ enforcing an invented threshold.
 python3 -m unittest discover -s tests -t .
 ```
 
-113 tests, no dependencies beyond the standard library. The parser round-trips all five §3
+131 tests, no dependencies beyond the standard library. The parser round-trips all five §3
 examples byte for byte; `show_clean.txt` must stay silent and `show_broken.txt` must keep
-breaking every rule exactly once. Per §10, the validator is the eval harness for everything
-downstream, so it is the thing to keep honest.
+breaking every rule. The monitor rule (§5 R2) is checked against all five §3 examples
+directly, since those examples are what pinned it down. Per §10, the validator is the eval
+harness for everything downstream, so it is the thing to keep honest.

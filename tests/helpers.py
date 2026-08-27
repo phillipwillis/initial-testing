@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 
+import dataclasses
+
+from newscast.config import UNSET, ShowConfig
 from newscast.markup import parse_show, parse_story
 from newscast.model import Block, Show, Story, StoryKind
 
@@ -41,3 +44,27 @@ def codes(report) -> set[str]:
 
 def codes_at(report, severity) -> set[str]:
     return {v.code for v in report.violations if v.severity is severity}
+
+
+def bare_config(**kwargs) -> ShowConfig:
+    """A config with the per-block pattern stripped out.
+
+    Targeted rule tests use this so that a story written to exercise one rule
+    does not also trip R11, R12 or R14 for being on the wrong shot, read by the
+    wrong anchor, or in a block that is 4 minutes short.
+    """
+    base = ShowConfig(**kwargs)
+    blocks = tuple(
+        dataclasses.replace(
+            b,
+            default_shot=UNSET,
+            open_shot=UNSET,
+            anchors=UNSET,
+            read_mode=UNSET,
+            solo_anchor=UNSET,
+            closing_anchor=UNSET,
+            budget_range=UNSET,
+        )
+        for b in base.blocks
+    )
+    return dataclasses.replace(base, blocks=blocks)

@@ -6,8 +6,9 @@ collection, ranking, slotting, script writing, and entry into the Inception CMS.
 **Status:** milestone 1 of §10 is built — the domain model, the §4 markup parser/serializer,
 the read-time estimator, and the §5 rule engine. No LLM and no network are involved yet.
 Everything from §6 phase 0 onward (collection, grading, slotting, Inception) is still the
-target, not the implementation. See §13 for what was decided provisionally while building,
-and §11.13–§11.19 for the questions building it raised.
+target, not the implementation. The §11 questions were answered on 2026-08-27 and the rule
+engine now enforces the real anchor pattern, shots, CG ceiling and monitor rule; §11.20 lists
+the three items still outstanding.
 
 ---
 
@@ -27,8 +28,8 @@ Two operating principles:
    editor note to cut the PKG into B-roll. This flexibility is what makes the fill algorithm
    tractable.
 
-Before writing code, work through **§11 Open Questions** with Phil. Several of them block
-real design decisions (block time budgets, wire access method, Inception access method).
+**§11 is answered.** Anything not covered there is still a question for Phil — §12 stands:
+don't guess at domain rules, and put the answer in this file when it arrives.
 
 ---
 
@@ -73,15 +74,22 @@ The show is two half hours, each with four blocks. Purpose per block:
 - **Camera shot is constant within a block.** Each block has an assigned default shot, broken
   only in special circumstances (which must be flagged, not silent).
 - **PKG budget: max 2 per block.** Zero is acceptable.
+- **No sports.** The noon show does not carry a sports section.
 
 ### Anchor pattern
 
-Two anchors open the A block. One breaks off for weather; the remaining anchor carries solo
-until the C block, where dual reads resume. This is one of several per-block nuances — the
-system needs a rule engine that checks anchor assignment against the block pattern, not a
-prompt instruction hoping the model remembers.
+The anchors are **Jeff** and **Megan**; Jeff doubles as the weather man. The pattern is
+identical in both half hours:
 
-> **Unresolved:** the second half hour's anchor and weather pattern is not yet specified. See §11.
+1. Jeff and Megan open the A block together with an introduction and hello.
+2. Jeff breaks off for a first look at weather, then tosses to Megan.
+3. Megan carries solo through the rest of A and all of B.
+4. Jeff is back for the weather tease closing the B block.
+5. The C block is double reads, and Jeff transitions into the main weather segment.
+6. The D block is double reads.
+
+This is one of several per-block nuances — the system needs a rule engine that checks anchor
+assignment against the block pattern, not a prompt instruction hoping the model remembers.
 
 ---
 
@@ -242,8 +250,11 @@ rule engine runs against the assembled rundown, not against individual model out
   monitor video placeholder at the start *and* a duplicate monitor file at the end of its SOT
   (or wherever it returns to camera). Without this, loading the second story overwrites the
   first story's monitor mid-tag and the monitor insta-swaps on air.
-- `R2` A SOT or SOTVO that returns to camera must carry `- D` on its opening camera cue and
-  `BACK TO D` on the return.
+- `R2` **Park the monitor in D when two video files play over it.** If two or more video files
+  play between the monitor being on screen and the monitor coming back, the opening camera cue
+  must carry `- D` and the return must carry `BACK TO D`. A VO, a SOT and a PKG are each one
+  file. A package on its own is therefore usually fine, and a story that never returns to
+  camera never needs D. (Corrected from "a SOT or SOTVO that returns to camera" — see §11.14.)
 - `R3` Every story terminates with `[#####]`.
 
 **Editorial / format**
@@ -252,12 +263,18 @@ rule engine runs against the assembled rundown, not against individual model out
 - `R5` CGs are short. Slug-length headlines fail. *"The Idaho Falls Farmers Market is closing
   down early because of the wind, and people are not happy about it"* is far too long;
   *"I.F. FARMER'S MARKET CLOSES AT 2:00 PM"* is right. Enforce a character ceiling (§11.9).
-- `R6` RDR only if the story is under ~15 seconds and no visual aid is possible.
-- `R7` VO runs 20–45 seconds.
+- `R6` RDR only if the story is under ~15 seconds and no visual aid is possible. A reader must
+  justify itself: the script carries an editor note saying why there is no video (§11.18).
+- `R7` VO runs 20–45 seconds. This is a range, not a hard rule — out-of-range is a warning for
+  a human to wave through, not an error (§11.16).
 - `R8` Every PKG has an intro. Flag any PKG without an outro for human review.
 - `R9` Max 2 PKGs per block.
 - `R10` Every block ends with a bump/tease.
-- `R11` Camera shot is constant within a block unless an exception is explicitly flagged.
+- `R11` Camera shot is constant within a block unless an exception is explicitly flagged. The
+  shot is the camera **and** the over-shoulder: the same camera on a different monitor is
+  pointing somewhere else, which is a different shot (§11.17). Two departures are structure
+  rather than exceptions — the A blocks open on their own shot for the double read, and
+  weather is at the weather wall.
 - `R12` Anchor assignment matches the block's anchor pattern.
 - `R13` **Daypart language.** This is the noon show. Wire copy frequently opens with "this
   morning" or "tonight." Detect and either rewrite or mark for trim, with an editor note.
@@ -409,33 +426,82 @@ script gets run through it, and a violation rate is the primary quality metric.
 
 ## 11. Open questions
 
-Blocking or near-blocking. Resolve with Phil before the relevant milestone.
+**Answered 2026-08-27.** Everything below carries its answer. What is still outstanding is
+collected in §11.20 — three items, none of which block the next milestone.
 
-Items 1, 2, 3 and 9 are now *parameters* rather than guesses: the rule engine reads them from
-`ShowConfig`, and the rules that depend on them report "not configured" instead of enforcing
-an invented threshold. Answering one is a one-line edit in `newscast/config.py`.
+1. **Block time budgets.** ✅ The first half hour is **27:55**, the second is **32:00**. The A
+   block runs roughly **5–7 minutes**. The C block in both half hours is back-timed to begin
+   about **1:00 to 0:30 before the quarter hour**. Breaks and weather take specific amounts of
+   time, and Inception already back-times the show, holds those allowances, and reports how
+   far over or under the show is running. *Still needed: the break and weather numbers
+   themselves — see §11.20.*
+2. **Anchor roster.** ✅ **Jeff** and **Megan**; Jeff doubles as the weather man. Full pattern
+   in §2, identical in both half hours.
+3. **Default camera shot per block.** ✅ Three cameras in the studio; OX1–OX5 are different
+   monitors, and the over-shoulder is part of the shot.
 
-1. **Block time budgets.** How many seconds does each block hold? This drives the entire fill
-   algorithm and nothing above can be finalized without it.
-2. **Anchor roster.** Who are the anchors, who does weather, and what is the second half hour's
-   anchor/weather pattern? Where exactly does the weather break-off fall relative to A and B?
-3. **Default camera shot per block.** `CAM1 OX1` is the only shot in the spec. What are the
-   others, and what counts as a "special circumstance" for breaking one?
-4. **Wire access.** ABC and CNN — API, feed, or screen scraping? What auth, and what format do
-   items come back in? Are related-story links exposed programmatically?
-5. **Inception access.** Is there an API, or is browser automation the only option? What auth?
-6. **Human handoff.** How does the agent learn which local stories the producer already
-   placed — read the rundown directly, or a separate handoff?
-7. **SOT timestamps.** Where do in/out points come from? Existing transcript or caption track,
-   or does this need ASR on the media?
-8. **CG writing.** Does the agent write CGs into Inception's CG system directly, or write them
-   into the script and leave the CG build to a human?
-9. **CG character ceiling.** What's the actual on-air limit for a lower third?
-10. **Sports.** The spec doesn't mention sports. Does the noon show carry a sports block?
-11. **Bumps/teases.** Separate rundown elements, or appended to the last story of a block?
-12. **Model + budget.** Which model runs the grading pass vs. the writing pass, and what's the
-    per-show cost ceiling? 200 stubs graded plus deep research on ~20 selected stories is the
-    load to plan around.
+   | Block | Half 1 | Half 2 |
+   |---|---|---|
+   | A | CAM2 OX3 | CAM2 OX3 |
+   | B | CAM3 OX5 | CAM1 OX1 |
+   | C | CAM3 OX2 | CAM3 OX2 |
+   | D | CAM3 OX2 | CAM3 OX2 |
+
+   The A blocks open on a different shot for the double read: **CAM3 OX2** in the first half
+   hour, **CAM1 OX4** in the second. Weather is done at the **WX GFX** shot, at the weather wall.
+4. **Wire access.** ✅ Selenium driving a real browser — web scraping in its purest form.
+   Links and authorizations exist. No API, so related-story links have to be discovered by
+   navigating the page like a person would.
+5. **Inception access.** ✅ Browser automation is the only way in. Previous attempts had
+   moderate success; development starts fresh.
+6. **Human handoff.** ✅ The agent reads the rundown directly, keeps track of the stories it
+   has added, and cross-checks that list against what is actually in the show.
+7. **SOT timestamps.** ✅ A pipeline. Download the video, run speech to text, and mark
+   timestamps per word or sentence. That transcript is the **authoritative verbatim** — wires
+   sometimes ship old scripts against revamped packages. The agent picks a sentence or two
+   spoken by an interviewee (never the reporter) and takes the in/out points from the
+   transcript. **Delete the downloaded video once transcription is done** — the agent does no
+   editing and only needs the transcript.
+8. **CG writing.** ✅ The agent writes CGs **into Inception**, not into the script. The §3
+   examples are how the agent passes information to the script-construction tools, which do
+   different things depending on what the agent provides.
+9. **CG character ceiling.** ✅ **39 characters.**
+10. **Sports.** ✅ The noon show does not carry a sports section.
+11. **Bumps/teases.** ✅ A bump is its own rundown element, typically a VO, an RDRVO, or an
+    RDR. Special bumps — weather bumps, the birthday bump — are a human's job, not the agent's.
+12. **Model + budget.** ✅ An Opus model for grading, for deciding the context-collection
+    process, and for script writing. Expected per-show cost is **under $1** because tool use
+    collapses many calls into one or two; the hard limit is **$2**.
+13. **R1 and packages.** ✅ Packages typically do not need to be put in D by their nature —
+    a PKG is a single video file, so it does not on its own trip the two-file rule.
+14. **The §3 PKG example and R2.** ✅ The example is right and R2 was stated wrong. The real
+    rule is the two-video-files rule now recorded as §5 R2. A monitor, a VO, another VO, and
+    then back to the monitor needs D; a monitor, a package, and back does not.
+15. **Do bumps carry a CG?** ✅ Yes — a bump CG, formatted differently from a normal lower
+    third. Weather carries a CG too, but it is the weather anchor's prefilled name and title,
+    so nobody writes one for it.
+16. **Is R7 hard or soft?** ✅ A range. Most stories land inside it, some do not. Warning.
+17. **What is "the shot" for R11?** ✅ Camera plus over-shoulder. Changing the OX changes where
+    the camera is pointing, which is a different shot entirely.
+18. **Should an RDR have to justify itself?** ✅ Yes.
+19. **Read-rate calibration.** ✅ 160 wpm is a reasonable working number; tweak as the project
+    continues.
+
+### 11.20 Still outstanding
+
+None of these block the next milestone.
+
+20. **Break and weather durations.** §11.1 gives the half-hour totals and the A-block range,
+    but per-block budgets for B, C and D fall out only once the break and weather allowances
+    are known. Inception already holds these numbers. Until they arrive, R14 checks the A
+    blocks and reports the half-hour reconciliation as unconfigured.
+21. **Bump CG format.** §11.15 establishes that a bump CG is formatted differently from a
+    lower third, but not how — so R5 skips bump CGs rather than measuring them against the
+    39-character ceiling.
+22. **Weather as a rundown element.** Weather occupies real time and appears in the rundown,
+    but whether the agent ever writes or times one — or whether it is purely Inception's, like
+    the birthday bump — is not settled. The rule engine already exempts `WEATHER` elements
+    from the CG, shot, and reader rules.
 
 ---
 
@@ -452,9 +518,8 @@ an invented threshold. Answering one is a one-line edit in `newscast/config.py`.
 
 ## 13. Implementation notes (milestone 1)
 
-Written by the build, not by Phil. Everything here is provisional and is either a decision to
-confirm or a question to answer. Nothing in this section is a producing convention — §1–§9
-remain the source of truth.
+Written by the build. §1–§9 remain the source of truth; this section records what the code
+does and where it is still guessing.
 
 ### 13.1 What exists
 
@@ -464,13 +529,13 @@ remain the source of truth.
 | `newscast/markup.py` | Parser and serializer for the §4 markup. Round-trips all five §3 examples byte for byte. |
 | `newscast/readtime.py` | `estimate_read_time()` (§8, §10.2). |
 | `newscast/timing.py` | Story and block durations, with in-package copy excluded. |
-| `newscast/config.py` | Every §11 threshold, in one place. |
+| `newscast/config.py` | The §11 answers, in one place. |
 | `newscast/rules.py` | R1–R15 plus X1–X5, one function per rule. |
 | `newscast/validator.py` | `validate_show()` (§8) and the violation-rate metric (§10). |
 | `newscast/cli.py` | `validate`, `summary`, `rules`, `readtime`. |
 
-`tests/fixtures/show_clean.txt` passes every enforceable rule; `show_broken.txt` breaks each
-one exactly once, and the test suite asserts that. 113 tests, `python3 -m unittest discover`.
+`tests/fixtures/show_clean.txt` passes every rule; `show_broken.txt` breaks each one, and the
+test suite asserts that. 131 tests, `python3 -m unittest discover -s tests -t .`.
 
 ### 13.2 Markup extensions
 
@@ -480,60 +545,49 @@ cues. They are inventions and can be renamed or replaced freely:
 | Cue | Exists because |
 |---|---|
 | `[SOURCE: ...]` | R15 — the source reference on a SOT/PKG segment. |
-| `[NOTE: ...]` | R15 — the editor note saying what to clip, trim, or pull. |
+| `[NOTE: ...]` | R15, and R6 — the editor note, which also carries a reader's justification. |
 | `[NO CG: reason]` | R4 — "unless explicitly exempted" needs a way to be explicit. |
 | `[SHOT EXCEPTION: reason]` | R11 — "must be flagged, not silent" needs the flag. |
 | `[MONITOR PLACEHOLDER]` / `[MONITOR DUPE]` | R1 — the two mitigations §5 R1 describes in prose. |
-| `[TEASE: ...]` | R10 — a bump has to be identifiable either way §11.11 lands. |
-| `[MEGAN/JAY]` | A dual read, for R12. |
+| `[JEFF/MEGAN]` | A double read, for R12. |
+| `[WX GFX]` | The weather wall shot, parsed like any other camera cue. |
 
-The rundown file format (`=== HALF 1 BLOCK A ===`, `--- STORY: SLUG ---`) is a local
-interchange format for fixtures and tests. It is not an Inception format.
+The rundown file format (`=== HALF 1 BLOCK A ===`, `--- STORY: SLUG ---`, `--- BUMP: SLUG ---`)
+is a local interchange format for fixtures and tests. It is not an Inception format.
 
-### 13.3 Judgement calls, all reversible
+### 13.3 How the monitor rule is implemented
 
-1. **R2 exempts packages.** §3's PKG example returns to camera on a plain `[CAM1 OX1]`, with
-   no `- D`, so R2 is applied only to segments containing a SOT. If the example is the thing
-   that is wrong, this flips in one line. See §11.14.
-2. **R1 does not exempt packages.** A PKG is a video file in D, so two PKG stories back to
-   back trip R1 the same as two SOTs. See §11.13.
-3. **R7 is enforced on whole VO stories only.** Inside a composite, a short VO leg is normal
-   because the story continues; an over-long leg is a warning, not an error.
-4. **R4 is checked per segment**, which means a bare tag segment needs `[NO CG: ...]`.
-5. **R6 checks the duration half of the rule only.** "No visual aid is possible" is not
-   checkable from the script. See §11.18.
-6. **Segment mode is derived, not declared** — from the cues present, so a mislabeled story
-   cannot lie to the validator.
-7. **Copy inside a `[PKG]` is not counted as read time**, because it is already inside the
-   package's declared duration. Copy after `[CONT VO]` is counted, because the anchor is live
-   again.
+§5 R2 is the one rule the original spec stated incorrectly, so it is worth spelling out. The
+engine walks each story counting video files — a `[VO]`, a `[CONT VO]`, a `[SOT]` and a `[PKG]`
+are one file each — and resets the count every time the monitor is on screen. If two or more
+files play before the monitor comes back, the story must park it in D.
 
-### 13.4 Provisional constants
+This reproduces all five §3 examples exactly: the reader and the plain VO need no D, the
+SOT example does (VO + SOT before the tag), the SOTVO does not because it never returns to
+camera, and the package does not because it is a single file. R1 then applies to consecutive
+stories that both park the monitor in D — which is why two packages back to back are fine.
 
-All in `newscast/config.py`; every one of them is a guess until Phil says otherwise, and each
-is reported as PROVISIONAL when it fires.
+### 13.4 What is still assumed
 
-| Constant | Value | Basis |
+| Constant | Value | Status |
 |---|---|---|
-| `words_per_minute` | 160 | Ordinary broadcast read rate. At this rate the §3 reader example runs 12.2s (R6 wants < 15) and the §3 VO example runs 23.1s (R7 wants 20–45), which is the only evidence available. |
-| `cg_char_ceiling_provisional` | 45 | The §5 R5 good example is 38 characters; the bad one is 94. |
-| `pkg_ceiling_seconds` | 180 | §3, "3:00 needs to be stellar". |
+| `words_per_minute` | 160 | Confirmed good enough for now (§11.19); tweak as real scripts accumulate. |
+| `cg_char_ceiling` | 39 | Confirmed (§11.9). |
+| `bump_cg_char_ceiling` | UNSET | The bump CG format is not specified yet (§11.21), so R5 skips bump CGs. |
+| `break_seconds` / `weather_seconds` | UNSET | Needed before the half-hour clock can be reconciled (§11.20). |
+| `pkg_ceiling_seconds` | 180 | From §3, "3:00 needs to be stellar". Never confirmed directly. |
 | `block_budget_tolerance_seconds` | 10 | Invented. |
 
-### 13.5 New questions for §11
+### 13.5 Judgement calls that remain the build's, not Phil's
 
-13. **R1 and packages.** Do two PKG stories back to back need the same monitor mitigation as
-    two SOT stories, or does the PKG's own return to camera handle it?
-14. **The §3 PKG example and R2.** Should `[CAM1 OX1]` in that example be `[CAM1 OX1 - D]`?
-    R2's scope depends on the answer.
-15. **Do bumps carry a CG?** Every tease in the clean fixture currently declares
-    `[NO CG: bump]` to satisfy R4.
-16. **Is R7 hard or soft?** A 47-second VO is currently an error. If it is really a
-    guideline, it should be a warning.
-17. **What is "the shot" for R11** — the camera alone (`CAM1`), or camera plus over-shoulder
-    (`CAM1 OX1`)? The engine currently compares cameras only, so `OX1` → `OX2` inside a block
-    passes.
-18. **Should an RDR have to justify itself?** R6's "no visual aid is possible" clause is
-    unenforceable without a required note on the story.
-19. **Read-rate calibration.** Roughly ten real scripts with their actual back-times would
-    replace the 160 wpm guess with a measured number, and every duration rule depends on it.
+1. **R7 is enforced on whole VO stories.** Inside a composite, a short VO leg is normal
+   because the story continues; only an over-long leg warns.
+2. **R4 is checked per segment**, which means a bare tag segment needs `[NO CG: ...]`.
+3. **Segment mode is derived, not declared** — from the cues present, so a mislabeled story
+   cannot lie to the validator.
+4. **Copy inside a `[PKG]` is not counted as read time**, because it is already inside the
+   package's declared duration. Copy after `[CONT VO]` is counted, because the anchor is live
+   again.
+5. **A double read is checked at block level for C and D.** §11.2 says both anchors are
+   involved in reading the stories; the engine requires both to appear in the block but does
+   not require every individual story to be a double read.

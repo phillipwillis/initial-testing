@@ -5,9 +5,10 @@
     python3 -m newscast rules
     python3 -m newscast readtime --text "VENDORS CLOSE UP SHOP AT TWO."
 
-Answers to the §11 open questions can be tried out without editing code:
+The §11 answers are baked into ShowConfig. These flags override them for a
+what-if, without editing code:
 
-    python3 -m newscast validate show.txt --budget 1A=420 --anchors 1A=MEGAN,JAY
+    python3 -m newscast validate show.txt --budget 1B=300 --wpm 170
 """
 
 from __future__ import annotations
@@ -77,18 +78,18 @@ def _load_show(path: str):
 
 def _add_config_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--wpm", type=float, help="anchor read rate (default 160)")
-    parser.add_argument("--cg-ceiling", type=int, help="lower-third character limit (§11.9)")
+    parser.add_argument("--cg-ceiling", type=int, help="lower-third character limit (default 39)")
     parser.add_argument(
         "--budget", action="append", default=[], metavar="BLOCK=SECONDS",
-        help="block time budget, repeatable (§11.1)",
+        help="fixed block time budget, repeatable (§11.1)",
     )
     parser.add_argument(
         "--anchors", action="append", default=[], metavar="BLOCK=NAME,NAME",
-        help="block anchor roster, repeatable (§11.2)",
+        help="override the block anchor roster, repeatable (§11.2)",
     )
     parser.add_argument(
         "--shot", action="append", default=[], metavar="BLOCK=CAM",
-        help="block default camera shot, repeatable (§11.3)",
+        help="override the block default shot, e.g. 1B=CAM3 OX5 (§11.3)",
     )
 
 

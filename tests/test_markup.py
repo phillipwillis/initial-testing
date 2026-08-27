@@ -161,21 +161,22 @@ class ShowParsingTests(unittest.TestCase):
 
     def test_slugs_and_kinds(self):
         block = self.show.block(1, "A")
-        self.assertEqual(block.stories[0].slug, "I.F. FARMERS MARKET")
+        self.assertEqual(block.stories[0].slug, "SHOW OPEN")
+        self.assertEqual(block.stories[1].slug, "I.F. FARMERS MARKET")
         self.assertIs(block.stories[-1].kind, StoryKind.BUMP)
         self.assertTrue(block.stories[-1].is_tease)
 
     def test_accepted_flag_survives_parsing(self):
         block = self.show.block(1, "A")
-        self.assertTrue(block.stories[0].accepted)
-        self.assertTrue(block.stories[0].submitted)
-        self.assertFalse(block.stories[1].accepted)
+        self.assertTrue(block.stories[1].accepted)
+        self.assertTrue(block.stories[1].submitted)
+        self.assertFalse(block.stories[0].accepted)
 
     def test_line_numbers_point_back_at_the_source_file(self):
-        story = self.show.block(1, "A").stories[0]
+        story = self.show.block(1, "A").stories[1]
         source_lines = fixture("show_clean.txt").splitlines()
         first = story.elements[0]
-        self.assertEqual(source_lines[first.line_no - 1].strip(), "[CAM1 OX1]")
+        self.assertEqual(source_lines[first.line_no - 1].strip(), "[CAM2 OX3]")
 
     def test_comment_lines_are_ignored(self):
         self.assertTrue(all(s.slug for s in self.show.stories))

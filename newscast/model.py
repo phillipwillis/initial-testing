@@ -54,6 +54,16 @@ class CameraCue(Element):
     monitor: Optional[str] = None
     park_d: bool = False
 
+    @property
+    def full_shot(self) -> str:
+        """Camera plus over-shoulder.
+
+        The over-shoulder is part of the shot, not a detail hung off it: the
+        same camera on a different monitor is pointing somewhere else, which is
+        a different shot entirely (§11.17).
+        """
+        return f"{self.shot} {self.monitor}" if self.monitor else self.shot
+
 
 @dataclass
 class OnCamCue(Element):
@@ -232,8 +242,8 @@ class Segment:
         return sum(c.seconds for c in self.video_cues)
 
     @property
-    def uses_d_channel(self) -> bool:
-        """True if this segment rolls a video file, which lands in D (§1)."""
+    def rolls_video(self) -> bool:
+        """True if this segment plays a video file (a SOT or a PKG)."""
         return bool(self.video_cues)
 
     def returns_to_camera(self) -> bool:
@@ -311,17 +321,50 @@ class Story:
 
     @property
     def shots(self) -> list[str]:
-        return [
-            e.shot for e in self.elements if isinstance(e, CameraCue)
-        ]
+        return [e.full_shot for e in self.elements if isinstance(e, CameraCue)]
+
+    @property
+    def video_file_count(self) -> int:
+        """Video files this story rolls.
+
+        A VO, a SOT and a PKG are each one file (§11.14).
+        """
+        return len(
+            [e for e in self.elements if isinstance(e, (VOCue, VideoCue))]
+        )
+
+    def requires_d_channel(self, files_before_d: int = 2) -> bool:
+        """True if the monitor has to be parked in D.
+
+        The rule is about the monitor, not about SOTs: if `files_before_d` video
+        files play between the monitor being on screen and coming back to it,
+        loading them flushes the monitor, so it has to be stored in D and
+        restored on the return (§11.14). A package is one file, which is why
+        a package on its own usually does not need D (§11.13).
+        """
+        files = 0
+        for e in self.elements:
+            if isinstance(e, CameraCue):
+                files = 0
+            elif isinstance(e, OnCamCue):
+                if files >= files_before_d:
+                    return True
+                files = 0
+            elif isinstance(e, (VOCue, VideoCue)):
+                files += 1
+        return False
+
+    @property
+    def declares_d_channel(self) -> bool:
+        return any(isinstance(e, CameraCue) and e.park_d for e in self.elements)
 
     @property
     def video_seconds(self) -> float:
         return sum(s.video_seconds for s in self.segments)
 
-    @property
-    def uses_d_channel(self) -> bool:
-        return any(s.uses_d_channel for s in self.segments)
+    def uses_d_channel(self, files_before_d: int = 2) -> bool:
+        """True if this story occupies D — declared, or required and missing."""
+        return self.declares_d_channel or self.requires_d_channel(files_before_d)
 
     @property
     def pkg_count(self) -> int:
