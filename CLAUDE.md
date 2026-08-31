@@ -455,9 +455,14 @@ collected in §11.20 — three items, none of which block the next milestone.
    are in `docs/wires/cnn-newsource.md`; note the open question there about the internal JSON
    API the site's own front end calls.
 5. **Inception access.** ✅ Browser automation is the only way in. Previous attempts had
-   moderate success; development starts fresh.
+   moderate success; development starts fresh. The prior implementation's hard-won knowledge —
+   the frame map, the SlickGrid column indices, the CKEditor shortcut expansion, the CG object
+   path — is recorded in `docs/inception.md`, along with what not to carry forward.
 6. **Human handoff.** ✅ The agent reads the rundown directly, keeps track of the stories it
-   has added, and cross-checks that list against what is actually in the show.
+   has added, and cross-checks that list against what is actually in the show. In practice a
+   protocol already exists and works: the producer puts a **CNN story number in the Source
+   column** and a **trigger code in Notes**; the agent acts on rows where both are filled and
+   **clears Notes** when the story is written. See `docs/inception.md`.
 7. **SOT timestamps.** ✅ A pipeline. Download the video, run speech to text, and mark
    timestamps per word or sentence. That transcript is the **authoritative verbatim** — wires
    sometimes ship old scripts against revamped packages. The agent picks a sentence or two
@@ -466,7 +471,9 @@ collected in §11.20 — three items, none of which block the next milestone.
    editing and only needs the transcript.
 8. **CG writing.** ✅ The agent writes CGs **into Inception**, not into the script. The §3
    examples are how the agent passes information to the script-construction tools, which do
-   different things depending on what the agent provides.
+   different things depending on what the agent provides. Mechanically: CG placeholders are
+   objects in the story editor, opened by double-click into their own editor frame
+   (`docs/inception.md`). The wire's `--SUPERS--` block supplies name and title.
 9. **CG character ceiling.** ✅ **39 characters.**
 10. **Sports.** ✅ The noon show does not carry a sports section.
 11. **Bumps/teases.** ✅ A bump is its own rundown element, typically a VO, an RDRVO, or an
@@ -596,6 +603,23 @@ stories that both park the monitor in D — which is why two packages back to ba
 
 ---
 
+## 13.6 Inception generates the markup
+
+Discovered from the previous implementation, and it changes what §4 is for.
+
+The agent does not type `[CAM2 OX3]` into Inception. Inception has its own shortcut
+expansion: typing `[OX2` and pressing ENTER creates a real production element, and
+Option+2 inserts MEGAN. So the §3/§4 markup is the **validated intermediate form** — what the
+rule engine checks and what a human reads in a diff — while what actually gets typed is a
+**keystroke plan** derived from it.
+
+That is a good split rather than a problem: the validator stays the eval harness for
+everything downstream (§10), and the keystroke layer becomes a narrow, separately testable
+translation at the very end. It does mean `serialize_story()` is not what drives Inception,
+and a `plan_keystrokes(story)` function is still to be written.
+
+---
+
 ## 14. Runtime constraints
 
 **The deliverable is a Python program, run from a terminal. Not an application.** That is the
@@ -617,12 +641,22 @@ What follows from it:
 - **No background service, no installer, no packaging.** If it cannot be run as
   `python3 -m something` from a checkout, it does not fit.
 
-### Still to confirm
+### Confirmed 2026-08-31
 
-- Is `pip install` available on the work machine, and does it have network access to PyPI?
-  If not, dependencies have to be vendored into the repo, which rules out anything large.
-- Which Python version is on the machine. The code currently assumes 3.10+ for the
-  `X | Y` type syntax; that is trivial to walk back if needed.
-- How chromedriver gets onto the machine. Recent Selenium fetches it automatically, which is
-  a download, which may be blocked.
-- Whether this is run by hand each morning or scheduled.
+- `pip install` works, with network to PyPI.
+- Latest Python. 3.10+ syntax is safe.
+- Chrome is present and Selenium can drive it.
+- **Run by hand each morning.** No scheduler, no service, no daemon. The entry point is a
+  command a producer types before the noon show.
+- Phil can copy Python files onto the machine and run them. Where the line sits beyond that is
+  not known, which is what `python3 -m newscast.doctor` exists to answer.
+
+### The architectural consequence
+
+Because the machine that can reach the wires is not the machine this code is written on,
+**Selenium only navigates and authenticates. It never parses.** The collector takes
+`driver.page_source` and hands the HTML to a pure function.
+
+Everything hard — finding rows, reading fields, building stubs — is therefore testable here,
+against saved HTML, with no browser and no credentials. Only navigation has to be debugged on
+the work machine, and navigation is the part that fails loudly rather than silently.
