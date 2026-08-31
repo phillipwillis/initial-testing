@@ -185,37 +185,11 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
     # The list scrolls inside its own container, not the window. Scrolling the
     # window does nothing at all, which looks exactly like a list that has
     # stopped loading.
-    # Pick the scrollable ancestor that actually contains the story rows. The
-    # page has several scrollable panes — the live-channel rail is one — and a
-    # 322px-tall one was chosen last run, which moved but was not the list.
-    scroller = driver.execute_script(
-        """
-        const rows = Array.from(document.querySelectorAll('.storyLineItemWrapperBox'));
-        if (!rows.length) return null;
-        const scored = new Map();
-        for (const row of rows) {
-          let node = row.parentElement;
-          while (node && node !== document.body) {
-            const style = getComputedStyle(node);
-            if (/auto|scroll/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 10) {
-              scored.set(node, (scored.get(node) || 0) + 1);
-            }
-            node = node.parentElement;
-          }
-        }
-        let best = null, bestRows = 0;
-        for (const [node, count] of scored) {
-          if (count > bestRows || (count === bestRows && best && node.clientHeight > best.clientHeight)) {
-            best = node; bestRows = count;
-          }
-        }
-        window.__newscastScroller = best;
-        if (!best) return {note: 'no scrollable ancestor contains rows; falling back to the window'};
-        return {tag: best.tagName.toLowerCase(), cls: (best.className || '').slice(0, 90),
-                rowsInside: bestRows, scrollHeight: best.scrollHeight, clientHeight: best.clientHeight};
-        """
-    )
-
+    # Do not try to identify the scrolling element. Two runs picked two
+    # different wrappers, one that scrolled 20px and one that was not the list,
+    # and a container that will not move is indistinguishable from a list that
+    # has run out. Asking the browser to bring the last row into view scrolls
+    # whatever actually needs to scroll.
     counts: list[int] = []
     tops: list[Any] = []
     for index in range(scroll_passes):
@@ -223,10 +197,12 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
         tops.append(
             driver.execute_script(
                 """
-                const el = window.__newscastScroller;
-                if (el) { el.scrollTop = el.scrollHeight; return Math.round(el.scrollTop); }
-                window.scrollTo(0, document.body.scrollHeight);
-                return Math.round(window.scrollY);
+                const rows = document.querySelectorAll('.storyLineItemWrapperBox');
+                if (!rows.length) return null;
+                const last = rows[rows.length - 1];
+                last.scrollIntoView({block: 'end'});
+                const box = last.getBoundingClientRect();
+                return {rows: rows.length, lastRowTop: Math.round(box.top)};
                 """
             )
         )
@@ -244,8 +220,7 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
     newest = max((s.timestamp for s in timed), default=None)
 
     return {
-        "scroll_container": scroller,
-        "scroll_top_after_each_pass": tops,
+        "scroll_position_after_each_pass": tops,
         "rows_after_each_scroll": counts,
         "rows_final": len(stubs),
         "rows_with_a_clock_time": len(timed),
@@ -268,6 +243,52 @@ EXPAND_SELECTORS = (
 )
 
 
+def apply_facet(driver, label_prefix: str, timeout: float = 20.0) -> dict[str, Any]:
+    """Tick a filter in the left rail, by the start of its label.
+
+    The rail carries `Video (4556)`, `Packages (1403)`, `Cut Sound (693)`,
+    `Has Script` and so on — the counts change hourly, so only the prefix is
+    matched.
+
+    This exists because probing whatever happens to be on screen is not a test.
+    One run met a quiet Sunday evening with five rows, none of them video, and
+    reported "no video row found" as though that were a finding about the site.
+    """
+    result = driver.execute_script(
+        """
+        const prefix = arguments[0].toLowerCase();
+        for (const label of document.querySelectorAll('label')) {
+          const text = (label.innerText || '').trim();
+          if (!text.toLowerCase().startsWith(prefix)) continue;
+          const box = label.querySelector('input[type="checkbox"]');
+          const target = box || label;
+          if (box && box.checked) return {label: text, alreadyOn: true};
+          target.scrollIntoView({block: 'center'});
+          target.click();
+          return {label: text, clicked: true};
+        }
+        return {error: 'no label starts with ' + arguments[0]};
+        """,
+        label_prefix,
+    )
+    if result.get("clicked") or result.get("alreadyOn"):
+        time.sleep(2.5)
+        result["rows_after"] = wait_for_rows(driver, timeout)
+    return result
+
+
+def clear_facets(driver) -> None:
+    """Untick every filter, so one probe does not constrain the next."""
+    driver.execute_script(
+        """
+        for (const box of document.querySelectorAll('input[type="checkbox"]')) {
+          if (box.checked) { box.click(); }
+        }
+        """
+    )
+    time.sleep(2.0)
+
+
 def wait_for_rows(driver, timeout: float = 30.0) -> int:
     """Wait until the list has rendered.
 
@@ -283,6 +304,29 @@ def wait_for_rows(driver, timeout: float = 30.0) -> int:
             return count
         time.sleep(0.5)
     return 0
+
+
+def wait_for_details(driver, timeout: float = 25.0) -> bool:
+    """Wait for an expanded story's detail table to render.
+
+    Expanding is a fetch, not a reveal: the click returns immediately and the
+    table arrives later. A fixed sleep captured a page whose expanded row held
+    no detail at all, and reported it as a story with no Story Number.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ready = driver.execute_script(
+            """
+            for (const cell of document.querySelectorAll('td, th')) {
+              if ((cell.innerText || '').trim().startsWith('Story Number')) return true;
+            }
+            return false;
+            """
+        )
+        if ready:
+            return True
+        time.sleep(0.5)
+    return False
 
 
 def _expand_first(driver, want_video: bool) -> dict[str, Any]:
@@ -311,7 +355,8 @@ def _expand_first(driver, want_video: bool) -> dict[str, Any]:
             tried.push(sel);
           }
         }
-        return {index: null, tried: Array.from(new Set(tried)), rows: rows.length,
+        return {index: null, tried: selectors, everTried: Array.from(new Set(tried)),
+                rows: rows.length, wantVideo: wantVideo,
                 videoRows: rows.filter(r => r.querySelector('[aria-label="Video"]')).length};
         """,
         want_video,
@@ -325,7 +370,7 @@ def probe_expand(driver, out: str, **options) -> dict[str, Any]:
     opened = _expand_first(driver, want_video=False)
     if opened.get("index") is None:
         return {"error": "no expandable row found", "attempt": opened}
-    time.sleep(3.0)
+    detail_ready = wait_for_details(driver)
 
     html = driver.page_source
     _write(out, "expanded-story.html", scrub_html(html)[0])
@@ -357,7 +402,9 @@ def probe_expand(driver, out: str, **options) -> dict[str, Any]:
 
     return {
         "expanded_row": opened,
-        "detail_labels": labels,
+        "detail_table_rendered": detail_ready,
+        "details": parse_story_details(html),
+        "detail_labels": sorted(set(labels)),
         "related_hits": related,
         "script_chars": len(text),
         "script_is_package": bool(script and script.is_package),
@@ -376,12 +423,27 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
     media file reports, and what our own estimator says the copy reads at — and
     see which agree.
     """
+    # Filter the listing to video rather than hoping one is on screen. A quiet
+    # evening showed five rows, all images and wire copy, and the probe reported
+    # "no video row found" as though that said something about the site.
+    facet = apply_facet(driver, "Video (")
     wait_for_rows(driver)
+
     opened = _expand_first(driver, want_video=True)
     if opened.get("index") is None:
-        return {"error": "no video row found to expand", "attempt": opened}
-    time.sleep(4.0)
+        # Packages are the case Phil says is worst, so try that facet too.
+        facet_pkg = apply_facet(driver, "Packages (")
+        wait_for_rows(driver)
+        opened = _expand_first(driver, want_video=True)
+        if opened.get("index") is None:
+            return {
+                "error": "no video row found to expand",
+                "video_facet": facet,
+                "packages_facet": facet_pkg,
+                "attempt": opened,
+            }
 
+    detail_ready = wait_for_details(driver)
     html = driver.page_source
     _write(out, "expanded-video.html", scrub_html(html)[0])
 
@@ -451,6 +513,8 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
         read_seconds = estimate_read_time(anchor_copy) if anchor_copy else None
 
     return {
+        "video_facet": facet,
+        "detail_table_rendered": detail_ready,
         "story_number": story_number,
         "footage_type": details.get("Footage Type"),
         "listing_duration_seconds": stub.wire_duration_seconds if stub else None,
@@ -462,6 +526,13 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
         "media_without_a_duration": len(media) - len(loaded),
         "matched_listing_row": stub is not None,
     }
+
+
+def probe_reset(driver, out: str, **options) -> dict[str, Any]:
+    """Untick the filters the duration probe set, so later probes see the
+    ordinary landing page."""
+    clear_facets(driver)
+    return {"rows_after_clearing": wait_for_rows(driver, timeout=15)}
 
 
 def probe_download(driver, out: str, **options) -> dict[str, Any]:
@@ -508,6 +579,7 @@ PROBES: tuple[tuple[str, str, Callable], ...] = (
     ("scroll", "how rows accumulate and how far back they reach", probe_scroll),
     ("expand", "what an expanded story holds", probe_expand),
     ("duration", "what the printed duration corresponds to", probe_duration),
+    ("reset", "clear the filters the duration probe set", probe_reset),
     ("download", "how material gets out", probe_download),
     ("api", "does the front end call a JSON API", probe_api),
 )

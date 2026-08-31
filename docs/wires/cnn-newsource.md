@@ -456,6 +456,36 @@ Worth noting for the parser: the icon is `ExpandMoreIcon`, not `KeyboardArrowDow
 exist on the page — the arrow icons belong to the Live Channels rail — and picking the wrong
 one finds nothing while looking like a page with no expandable rows.
 
+## Probing a live listing needs the site's own filters
+
+Three runs taught the same lesson three ways: **whatever happens to be on screen is not a
+sample.** The listing changes under the probe — row counts went 10, then 8, then 3 within one
+run — and a quiet Sunday evening showed five rows, all images and wire copy, from which the
+probe concluded "no video row found" as though that were a fact about the site.
+
+So the duration probe now ticks the rail's own `Video (…)` filter, falling back to
+`Packages (…)`, and unticks them afterwards. The counts in those labels change hourly, so
+only the prefix is matched.
+
+The rail's filters, from a real capture:
+
+```
+Image (5393)     Wire Article (5851)   Video (4556)    Downloadable (1124)
+File (552)       Packages (1403)       Raw (50)        Vertical Video (66)
+Cut Sound (693)  Bundles               Has Script      Editors' Choice (16)
+```
+
+Two more lessons from the same runs:
+
+- **Expanding a story is a fetch, not a reveal.** The click returns at once and the detail
+  table arrives later. A fixed three-second wait captured a page whose expanded row held no
+  detail at all — no `Story Number` anywhere in 1MB of HTML — and reported it as a story
+  without one. The probe now polls for the table.
+- **Do not try to identify the scrolling element.** Two runs picked two different wrappers:
+  one that scrolled 20 pixels, and one that moved but was not the list. A container that will
+  not move looks exactly like a list that has run out of stories. Asking the browser to bring
+  the last row into view scrolls whatever actually needs to scroll.
+
 ## What the first probe run settled
 
 - **The list scrolls in its own container, not the window.** A run that scrolled
