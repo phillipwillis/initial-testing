@@ -125,6 +125,29 @@ class ScrubTests(unittest.TestCase):
         self.assertIn("Grand Canyon flood", html)
 
 
+class LaunchTests(unittest.TestCase):
+    def test_launch_is_a_no_op_when_chrome_is_already_there(self):
+        from newscast.capture import launch_chrome
+
+        with _Endpoint({"Browser": "Chrome/131.0.0.0"}) as endpoint:
+            self.assertEqual(launch_chrome(endpoint.port), 0)
+
+    def test_launch_refuses_a_port_something_else_holds(self):
+        from newscast.capture import launch_chrome
+
+        with _Endpoint({"Browser": "Adobe UXP"}) as endpoint:
+            with self.assertRaises(SystemExit) as caught:
+                launch_chrome(endpoint.port)
+        self.assertIn("Adobe UXP", str(caught.exception))
+
+    def test_the_profile_directory_is_not_the_default_chrome_one(self):
+        """A debugging port on the everyday profile exposes every session on it."""
+        from newscast.capture import profile_dir
+
+        self.assertIn(".newscast-chrome", profile_dir())
+        self.assertNotIn("Application Support/Google", profile_dir())
+
+
 class LaunchHintTests(unittest.TestCase):
     def test_the_hint_carries_the_requested_port(self):
         self.assertIn("9333", launch_hint(9333))

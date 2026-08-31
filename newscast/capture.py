@@ -27,7 +27,9 @@ import os
 import platform
 import re
 import socket
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from typing import Optional
@@ -171,9 +173,9 @@ def doctor(port: int = DEFAULT_DEBUG_PORT) -> int:
         _info("chrome not found in the usual places", "it may still be installed")
 
     if not port_is_open(port):
-        _no(f"nothing listening on port {port}", "start Chrome with a debugging port:")
-        print(f"\n{launch_hint(port)}\n")
-        print("    Then log into the wire as normal and re-run this check.")
+        _no(f"nothing listening on port {port}", "no browser to attach to yet")
+        print(f"\n    python3 -m newscast.capture launch --port {port}\n")
+        print("    …starts one. Then log into the wire and re-run this check.")
     else:
         browser, is_chrome = browser_on_port(port)
         if is_chrome:
@@ -200,6 +202,81 @@ def doctor(port: int = DEFAULT_DEBUG_PORT) -> int:
 
 
 # --------------------------------------------------------------------------
+# launch
+# --------------------------------------------------------------------------
+
+
+def profile_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".newscast-chrome")
+
+
+def launch_chrome(
+    port: int = DEFAULT_DEBUG_PORT, url: Optional[str] = None, wait: float = 20.0
+) -> int:
+    """Start Chrome with a debugging port and leave it running.
+
+    Detached, so closing the terminal does not take the browser with it, and so
+    the producer gets their prompt back instead of a blocked terminal.
+
+    Uses a separate profile directory on purpose. Opening a debugging port on
+    the everyday profile would expose every session logged in on it to anything
+    that can reach the port.
+    """
+    chrome = find_chrome()
+    if not chrome:
+        raise SystemExit(
+            "Could not find Chrome in the usual places. Start it by hand:\n\n"
+            f"{launch_hint(port)}"
+        )
+
+    browser, is_chrome = browser_on_port(port)
+    if is_chrome:
+        print(f"Chrome is already on port {port} — nothing to do.")
+        return 0
+    if browser:
+        raise SystemExit(
+            f"Port {port} is taken by {browser}. Pick another with --port."
+        )
+
+    argv = [
+        chrome,
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile_dir()}",
+        "--no-first-run",
+        "--no-default-browser-check",
+    ]
+    if url:
+        argv.append(url)
+
+    print(f"starting chrome on port {port}")
+    print(f"profile   {profile_dir()}")
+    subprocess.Popen(
+        argv,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        _, is_chrome = browser_on_port(port)
+        if is_chrome:
+            print(f"\nChrome is up on port {port}.")
+            print(
+                "\nThis is a separate profile, so log into the wire in it once."
+                "\nThen capture the page:\n"
+            )
+            print(f"    python3 -m newscast.capture page --tab newsource --port {port}\n")
+            return 0
+        time.sleep(0.4)
+
+    raise SystemExit(
+        f"Chrome did not come up on port {port} within {wait:.0f}s.\n"
+        "It may still be starting — re-run doctor in a moment."
+    )
+
+
+# --------------------------------------------------------------------------
 # capture
 # --------------------------------------------------------------------------
 
@@ -213,9 +290,9 @@ def attach(port: int = DEFAULT_DEBUG_PORT):
 
     if not port_is_open(port):
         raise SystemExit(
-            f"Nothing is listening on port {port}.\n\n"
-            f"{launch_hint(port)}\n\n"
-            "Then log in as normal and run this again."
+            f"Nothing is listening on port {port}. Start Chrome first:\n\n"
+            f"    python3 -m newscast.capture launch --port {port}\n\n"
+            "…then log into the wire in the window it opens, and run this again."
         )
 
     browser, is_chrome = browser_on_port(port)
@@ -359,6 +436,12 @@ def main(argv: list[str] | None = None) -> int:
         help="capture the tab whose title or URL contains this, e.g. --tab newsource",
     )
 
+    p_launch = sub.add_parser(
+        "launch", help="start Chrome with a debugging port and leave it running"
+    )
+    p_launch.add_argument("--port", type=int, default=DEFAULT_DEBUG_PORT)
+    p_launch.add_argument("--url", help="open this page on startup")
+
     p_scrub = sub.add_parser("scrub", help="redact a saved HTML file in place")
     p_scrub.add_argument("path")
     p_scrub.add_argument("--out")
@@ -367,6 +450,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "doctor":
         return doctor(args.port)
+    if args.command == "launch":
+        return launch_chrome(args.port, args.url)
     if args.command == "page":
         return capture_page(
             args.out, args.port, scrub=not args.no_scrub, tab=args.tab

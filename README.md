@@ -57,9 +57,13 @@ ceiling — report `INFO ... not configured` rather than enforcing an invented t
 ## On the work machine
 
 ```bash
-python3 -m newscast.capture doctor            # what can this machine actually do?
-python3 -m newscast.capture page --out cnn.html   # save the rendered DOM of the current tab
+python3 -m newscast.capture launch                        # start Chrome with a debugging port
+python3 -m newscast.capture doctor                        # what can this machine actually do?
+python3 -m newscast.capture page --out cnn.html --tab newsource
 ```
+
+`launch` starts Chrome detached on a separate profile and hands the terminal back. Log into
+the wire in the window it opens — once, since the profile persists — then capture.
 
 `doctor` reports Python, Selenium, Chrome and whether Chrome — specifically Chrome — is on
 the debugging port. The default port is 9333 rather than the conventional 9222, because
