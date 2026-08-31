@@ -36,7 +36,8 @@ _VERSION_RE = re.compile(r"^\s*version\b\s*(?P<n>\d+)?", re.I)
 # column (docs/inception.md).
 _STORY_NUMBER_RE = re.compile(r"^[A-Z]{2,3}-\d{3,4}[A-Z]{2}$")
 
-# "01:02", "01:55" — the running time of the material.
+# "01:02", "01:55" — what CNN prints as the duration. See StoryStub for why
+# this is a hint rather than a running time.
 _DURATION_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
 
 # Forms the wire ships video in. These line up with the §3 segment types, which
@@ -96,7 +97,7 @@ class RowMetadata:
     story_number: str = ""
     market: str = ""
     footage_type: str = ""
-    duration_seconds: Optional[float] = None
+    wire_duration_seconds: Optional[float] = None
 
 
 def _classify_metadata(metadata: Node) -> RowMetadata:
@@ -142,8 +143,8 @@ def _classify_metadata(metadata: Node) -> RowMetadata:
             found.story_number = text
             continue
 
-        if found.duration_seconds is None and _DURATION_RE.match(text):
-            found.duration_seconds = parse_duration(text)
+        if found.wire_duration_seconds is None and _DURATION_RE.match(text):
+            found.wire_duration_seconds = parse_duration(text)
             continue
 
         if not found.footage_type and text.upper() in FOOTAGE_TYPES:
@@ -231,7 +232,7 @@ def parse_row(scope: Node) -> Optional[StoryStub]:
         story_number=meta.story_number,
         market=meta.market,
         footage_type=meta.footage_type,
-        duration_seconds=meta.duration_seconds,
+        wire_duration_seconds=meta.wire_duration_seconds,
     )
 
 

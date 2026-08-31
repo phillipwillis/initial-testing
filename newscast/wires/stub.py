@@ -49,7 +49,13 @@ class StoryStub:
     story_number: str = ""     # "WE-001MO" — what the producer types into Source
     market: str = ""           # "Seattle-Tacoma, WA"
     footage_type: str = ""     # VO/SIL, DONUT, PKG …
-    duration_seconds: Optional[float] = None
+
+    # The duration CNN prints in the listing. NOT the read time and NOT
+    # reliably the running time of the finished element: the script may run 20
+    # seconds while this number counts the b-roll in the video file, and
+    # packages are especially unpredictable. Useful as a rough sort key, never
+    # as the TRT that goes into a rundown — see CLAUDE.md §11.23.
+    wire_duration_seconds: Optional[float] = None
 
     @property
     def has_script(self) -> bool:
@@ -58,6 +64,12 @@ class StoryStub:
     @property
     def has_video(self) -> bool:
         return ContentType.VIDEO in self.content_type
+
+    @property
+    def duration_is_trustworthy(self) -> bool:
+        """Always False today. Kept as the single place to change if a
+        trustworthy duration ever arrives from the wire."""
+        return False
 
     @property
     def is_video_record(self) -> bool:

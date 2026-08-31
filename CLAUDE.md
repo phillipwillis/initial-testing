@@ -507,6 +507,15 @@ None of these block the next milestone.
 21. **Bump CG format.** §11.15 establishes that a bump CG is formatted differently from a
     lower third, but not how — so R5 skips bump CGs rather than measuring them against the
     39-character ceiling.
+23. **CNN's printed duration is not the running time.** ✅ Answered, and the answer is "do
+    not trust it". The script may run 20 seconds while the number CNN prints counts the
+    b-roll in the video file, and packages are the worst offenders. So `wire_duration_seconds`
+    is a sort key, never a TRT: a duration that reaches a rundown has to come from somewhere
+    else. The candidates are the media element's own duration, the `TRT:` field in the wire
+    script, and — for anchor copy — our own `estimate_read_time`, which is authoritative for
+    the part a human reads. `newscast.probe` compares all of them on one story to find out
+    which agree. *Still open: which source to trust for a package.*
+
 22. **Weather as a rundown element.** Weather occupies real time and appears in the rundown,
     but whether the agent ever writes or times one — or whether it is purely Inception's, like
     the birthday bump — is not settled. The rule engine already exempts `WEATHER` elements

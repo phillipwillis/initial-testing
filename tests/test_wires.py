@@ -220,10 +220,15 @@ class VideoRowTests(unittest.TestCase):
             [s.footage_type for s in self.stubs], ["VO/SIL", "DONUT", "PKG"]
         )
 
-    def test_the_duration_is_read(self):
+    def test_the_wire_duration_is_read(self):
         self.assertEqual(
-            [s.duration_seconds for s in self.stubs], [62.0, 91.0, 115.0]
+            [s.wire_duration_seconds for s in self.stubs], [62.0, 91.0, 115.0]
         )
+
+    def test_the_wire_duration_is_never_treated_as_authoritative(self):
+        """It may be counting b-roll in the file rather than the finished
+        element, and packages are worst (§11.23)."""
+        self.assertFalse(any(s.duration_is_trustworthy for s in self.stubs))
 
     def test_the_story_number_is_read(self):
         """What a producer types into the rundown's Source column."""
@@ -255,7 +260,7 @@ class VideoRowTests(unittest.TestCase):
     def test_a_wire_article_row_is_not_a_video_record(self):
         article = parse_listing(fixture("cnn_listing.html"))[0]
         self.assertFalse(article.is_video_record)
-        self.assertIsNone(article.duration_seconds)
+        self.assertIsNone(article.wire_duration_seconds)
         self.assertEqual(article.market, "")
 
 

@@ -253,6 +253,28 @@ second shape, so fields are identified by what they contain: a timestamp is what
 one, a Story Number matches `NE-005MO`, a duration matches `01:02`, a footage type is in a
 known set, and what is left over is source then market, in order.
 
+### The printed duration is not the running time
+
+Phil, 31 Aug: *"Duration in CNN is unreliable. The script may be for 20 seconds, and the
+duration in a marker for how much b-roll is in the video file. Packages are notoriously
+unpredictable with CNN."*
+
+So the number in the listing is a sort key and nothing more. A duration that reaches a
+rundown decides whether the show runs over, and this one cannot carry that weight. The field
+is named `wire_duration_seconds` to keep that visible at every call site, and
+`StoryStub.duration_is_trustworthy` returns False as the single place to change if that ever
+stops being true.
+
+Where a real duration can come from, in the order worth trying:
+
+1. **`estimate_read_time` on the copy we write** — authoritative for anchor read time, which
+   is the whole of a VO and the intro and tag of a package.
+2. **The media element's own duration**, once the player has loaded the file.
+3. **The `TRT:` field in the wire script**, where the script carries one.
+
+`python3 -m newscast.probe --only duration` puts all three against one story and reports
+which agree. Until that comes back, treat every package length as unknown.
+
 ### The video schema is worth having
 
 It carries what slotting needs, before a story is ever opened:
@@ -262,7 +284,7 @@ It carries what slotting needs, before a story is ever opened:
 | Story Number | `WE-001MO` | The id. This is what a producer types into the rundown's Source column (`docs/inception.md`) |
 | Market | `Seattle-Tacoma, WA` | §7 `viewer_impact` — an Idaho Falls show weights local and regional hardest |
 | Footage type | `VO/SIL`, `DONUT`, `PKG` | Maps onto the §3 segment types. The wire is saying what the material can become |
-| Duration | `01:02` | The TRT, which §6 phase 2 needs to fill a hole |
+| Duration | `01:02` | **A hint only — see below** |
 
 **The Story Number is confirmed**, not inferred: `WE-001MO` appears in the collapsed row's
 metadata line *and* as `Story Number:` in that story's expanded panel.
