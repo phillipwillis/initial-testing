@@ -450,8 +450,10 @@ collected in §11.20 — three items, none of which block the next milestone.
    The A blocks open on a different shot for the double read: **CAM3 OX2** in the first half
    hour, **CAM1 OX4** in the second. Weather is done at the **WX GFX** shot, at the weather wall.
 4. **Wire access.** ✅ Selenium driving a real browser — web scraping in its purest form.
-   Links and authorizations exist. No API, so related-story links have to be discovered by
-   navigating the page like a person would.
+   Links and authorizations exist. No published API, so related-story links have to be
+   discovered by navigating the page like a person would. Collection notes for CNN Newsource
+   are in `docs/wires/cnn-newsource.md`; note the open question there about the internal JSON
+   API the site's own front end calls.
 5. **Inception access.** ✅ Browser automation is the only way in. Previous attempts had
    moderate success; development starts fresh.
 6. **Human handoff.** ✅ The agent reads the rundown directly, keeps track of the stories it
