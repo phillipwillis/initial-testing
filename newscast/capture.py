@@ -222,13 +222,9 @@ def launch_chrome(
     the everyday profile would expose every session logged in on it to anything
     that can reach the port.
     """
-    chrome = find_chrome()
-    if not chrome:
-        raise SystemExit(
-            "Could not find Chrome in the usual places. Start it by hand:\n\n"
-            f"{launch_hint(port)}"
-        )
-
+    # Check the port before looking for the binary. If Chrome is already
+    # serving the port there is nothing to launch and the binary is irrelevant,
+    # and if something else holds the port that is the more useful diagnosis.
     browser, is_chrome = browser_on_port(port)
     if is_chrome:
         print(f"Chrome is already on port {port} — nothing to do.")
@@ -236,6 +232,13 @@ def launch_chrome(
     if browser:
         raise SystemExit(
             f"Port {port} is taken by {browser}. Pick another with --port."
+        )
+
+    chrome = find_chrome()
+    if not chrome:
+        raise SystemExit(
+            "Could not find Chrome in the usual places. Start it by hand:\n\n"
+            f"{launch_hint(port)}"
         )
 
     argv = [
