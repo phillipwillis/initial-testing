@@ -1,9 +1,8 @@
 # CNN Newsource — collection notes
 
-Working notes for §10.3 (wire collection). Recorded from Phil's walkthrough and two
-screenshots of the landing page on 31 Aug 2026, one with DevTools open. **Nobody has driven
-this site from code yet** — everything here is read off the UI, so treat it as a starting
-map, not verified behaviour.
+Working notes for §10.3 (wire collection). **Verified against a real capture** of the landing
+page taken on 31 Aug 2026 with `python3 -m newscast.capture page`; the parser is tested
+against three rows lifted verbatim from it. Anything still inferred says so.
 
 No credentials appear in this file or anywhere in this repo. See §"Access" below.
 
@@ -228,6 +227,51 @@ CNN_NEWSOURCE_PASSWORD
 
 Read at runtime, never logged, never written to disk.
 
+## What the capture settled
+
+**The story list is lazy-loaded, not paged.** The capture held exactly five
+`storyLineItemWrapperBox` elements — one screenful. There is no pager and no virtual-list
+library in the DOM, so rows arrive as you scroll. The collector therefore scrolls and
+accumulates rather than walking pages.
+
+**There is no date filter.** The two controls above the list are `Sort by Date` and
+`Sort by Relevance` — sorting, not filtering. So "the past day" is not a query: it is
+"scroll, sorted by date, until the timestamps fall past the cutoff". That is how §6 gets its
+~200 stories, and it means collection cost scales with how far back the cutoff sits.
+
+**Media icons carry a real `aria-label`**, which is the thing to match:
+
+| aria-label | data-testid | Means |
+|---|---|---|
+| `Wire Article` | `DescriptionIcon` | Script exists |
+| `Image` | `ImageIcon` | Stills |
+
+Match the label **exactly**. Searching `DescriptionIcon` for the substring `script` matches
+de-**script**-ionicon — the right answer for the wrong reason, and wrong as soon as CNN
+renames an icon. The icons live in a `mediaAndBundleIcons` container; the row also holds a
+copy button, and the page header holds Planner, Notifications and Download Manager icons that
+a looser search picks up eventually.
+
+**A story identifier exists, on the thumbnail.** Rendition URLs carry CNN's own slug:
+
+```
+newsource-image-renditions-prd.ns.cnn.com/INT_SWITZERLAND_SHOOTING_RAVE/…
+newsource-image-renditions-prd.ns.cnn.com/WEA_NORTHEAST_STORMS_HEAT_CLIMATE/…
+```
+
+Human-readable, stable per story, and prefixed by desk (`INT`, `WEA`). Not the Story Number
+the search box takes — that is not in the listing DOM at all — but far better than hashing a
+headline. Rows with no thumbnail (affiliate logo rows) have none.
+
+**Sources are not all CNN.** The capture carried `KCAL, KCBS` and `CNN Español` alongside
+`CNN`. Affiliate credits list multiple call signs in one field, so the source is a label to
+keep verbatim, not an enum.
+
+**`MuiTypography-noWrap` truncates with CSS, not in the DOM.** An earlier note here assumed
+the visible text could be clipped and the `title` attribute was needed to recover it. Not so —
+they agree. Reading the attribute is still right, because it is the value the app set
+deliberately, but the reason was wrong.
+
 ## Getting real markup into the repo
 
 The fixture the parser is tested against was reconstructed from screenshots, so it pins the
@@ -246,11 +290,17 @@ tokens, JWTs, key-shaped JSON fields and long hex ids, but that is best effort.
 
 ## Still unknown
 
-1. **The date filter.** Without it there is no "past day" and no ~200 stories.
-2. **Story IDs.** Nothing in the screenshots shows a stable per-story identifier.
-3. **Related stories.** §11.4 says these must be discovered by navigating. Not yet seen.
-4. **Paging.** Whether the list pages, scrolls infinitely, or lazy-loads.
-5. **The expanded panel vs. a story page.** Which one `wire_expand()` should read.
-6. **Video and script download.** The download icon in the header, the per-row copy icon, and
-   how §11.7's "download the video, transcribe, delete" actually gets the file.
-7. **Whether we may use the JSON API** instead of the DOM.
+1. **Related stories.** §11.4 says these must be discovered by navigating. The collapsed
+   listing does not show them, so they are behind the expanded panel or the story page.
+2. **The expanded panel vs. a story page.** Which one `wire_expand()` should read. The
+   `article-preview`, `originally-published` and `byline` classes appear only when a row is
+   expanded, and the capture was taken collapsed — so a capture with one story open would
+   settle this.
+3. **The video icon's label.** No row in the capture carried video, so the aria-label for it
+   is a guess (`Video`, with `PlayArrowIcon` as the fallback signal). One capture including a
+   video row confirms it.
+4. **The Story Number**, which the search box takes and the previous implementation used. It
+   is not in the listing DOM; it is presumably in the expanded panel next to `Story Number:`.
+5. **Video and script download.** The header download icon, the per-row copy button, and how
+   §11.7's "download the video, transcribe, delete" actually gets the file.
+6. **Whether we may use the JSON API** instead of the DOM.

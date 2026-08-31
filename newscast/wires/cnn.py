@@ -11,10 +11,8 @@ hand-authored names are used here — `metadataContainer`, `title`, `metadata`,
 `metadataDivider`, `description` — and fields are identified by what they
 contain rather than by position, so a reordered row still parses.
 
-**Unverified.** The fixture behind the tests was reconstructed from screenshots
-of the DOM inspector, not saved from the live site. It pins down the parsing
-logic; it does not prove the markup. Replace it with a real saved page as soon
-as one exists — the tests will say what this got wrong.
+Verified against a real capture of the landing page on 31 Aug 2026. The fixture
+is three rows lifted verbatim from it.
 """
 
 from __future__ import annotations
@@ -30,19 +28,34 @@ LANDING_URL = "https://newsource.ns.cnn.com/landing"
 
 _VERSION_RE = re.compile(r"^\s*version\b\s*(?P<n>\d+)?", re.I)
 
-# The Media icons have not been inspected yet, so this maps whatever accessible
-# text they expose. Anything unrecognised is reported as UNKNOWN rather than
-# guessed at.
-_MEDIA_WORDS = {
+# The Media icons carry a real aria-label, which is the semantic name and the
+# thing to match on. Matched exactly, never as a substring: the MUI icon name
+# for a wire article is "DescriptionIcon", and looking for "script" inside that
+# matches de-SCRIPT-ionicon, which is the right answer by accident and one icon
+# rename away from being wrong.
+MEDIA_ICONS = "mediaAndBundleIcons"
+
+_MEDIA_LABELS = {
+    "wire article": ContentType.SCRIPT,
     "script": ContentType.SCRIPT,
-    "document": ContentType.SCRIPT,
-    "text": ContentType.SCRIPT,
-    "video": ContentType.VIDEO,
-    "play": ContentType.VIDEO,
     "image": ContentType.IMAGE,
-    "photo": ContentType.IMAGE,
-    "picture": ContentType.IMAGE,
+    "video": ContentType.VIDEO,
 }
+
+# Secondary signal, for a row whose icons carry no aria-label.
+_MEDIA_TESTIDS = {
+    "descriptionicon": ContentType.SCRIPT,
+    "imageicon": ContentType.IMAGE,
+    "playarrowicon": ContentType.VIDEO,
+    "playcirclefilledicon": ContentType.VIDEO,
+    "videocamicon": ContentType.VIDEO,
+}
+
+# The thumbnail lives on a rendition host and its path carries CNN's own slug
+# for the story: WEA_NORTHEAST_STORMS_HEAT_CLIMATE, INT_SWITZERLAND_SHOOTING_RAVE.
+_THUMBNAIL_SLUG_RE = re.compile(
+    r"newsource-image-renditions[^/]*\.ns\.cnn\.com/(?P<slug>[A-Z0-9_]{4,})/"
+)
 
 
 def _caption_fields(metadata: Node) -> list[Node]:
@@ -92,27 +105,42 @@ def _classify_metadata(metadata: Node) -> tuple[str, Optional[int], str]:
 def parse_media_types(scope: Node) -> tuple[ContentType, ...]:
     """Content types from the row's `Media :` icons.
 
-    UNVERIFIED — the icon markup has not been inspected. Reads whatever
-    accessible text the icons expose and reports UNKNOWN when it recognises
-    nothing, so a wrong guess shows up as missing data rather than as a
-    plausible lie.
+    Scoped to the `mediaAndBundleIcons` container. The row also holds a copy
+    button and a checkbox, and the page header holds Notifications, Planner and
+    Download Manager icons — none of which describe the story, and all of which
+    a looser search would eventually pick up.
     """
+    icons = scope.find(cls=MEDIA_ICONS) or scope
     found: list[ContentType] = []
-    for node in scope.walk():
-        hints = " ".join(
-            [
-                node.attr("title"),
-                node.attr("alt"),
-                node.attr("aria-label"),
-                node.attr("data-testid"),
-            ]
-        ).lower()
-        if not hints.strip():
-            continue
-        for word, kind in _MEDIA_WORDS.items():
-            if word in hints and kind not in found:
-                found.append(kind)
+
+    for node in icons.walk():
+        label = _norm_label(node.attr("aria-label"))
+        kind = _MEDIA_LABELS.get(label)
+        if kind is None:
+            kind = _MEDIA_TESTIDS.get(_norm_label(node.attr("data-testid")))
+        if kind is not None and kind not in found:
+            found.append(kind)
+
     return tuple(found)
+
+
+def _norm_label(text: str) -> str:
+    return " ".join((text or "").split()).casefold()
+
+
+def parse_story_slug(scope: Node) -> str:
+    """CNN's own slug for the story, off the thumbnail's rendition URL.
+
+    Not the Story Number the search box takes — that is not in the listing DOM
+    at all — but it is stable per story and it is human-readable, which makes it
+    a far better key than a hash of the headline. Rows with no thumbnail (the
+    CNN Wire logo rows) have none.
+    """
+    for node in scope.walk():
+        match = _THUMBNAIL_SLUG_RE.search(node.attr("src"))
+        if match:
+            return match.group("slug")
+    return ""
 
 
 def parse_row(scope: Node) -> Optional[StoryStub]:
@@ -121,8 +149,10 @@ def parse_row(scope: Node) -> Optional[StoryStub]:
     if title is None:
         return None
 
-    # The title attribute holds the full headline; the visible text may be
-    # truncated by MuiTypography-noWrap.
+    # Read the attribute rather than the text. MuiTypography-noWrap truncates
+    # with CSS rather than in the DOM, so the two agree today — but the
+    # attribute is the value the app set deliberately, and it survives the app
+    # deciding to shorten what it renders.
     slug = title.attr("title") or title.text
 
     timestamp_text, version, source = "", None, ""
@@ -133,6 +163,7 @@ def parse_row(scope: Node) -> Optional[StoryStub]:
     description = scope.find(cls="description")
 
     return StoryStub(
+        id=parse_story_slug(scope),
         slug=slug.strip(),
         source=source or CNN_SOURCE,
         timestamp=parse_timestamp(timestamp_text),

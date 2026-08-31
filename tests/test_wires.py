@@ -97,66 +97,102 @@ class DomTests(unittest.TestCase):
 
 
 class ListingTests(unittest.TestCase):
+    """Against three rows lifted verbatim from a real capture."""
+
     def setUp(self):
         self.stubs = parse_listing(fixture("cnn_listing.html"))
 
     def test_every_row_is_found(self):
         self.assertEqual(len(self.stubs), 3)
 
-    def test_the_headline_comes_from_the_title_attribute(self):
-        """The visible text may be truncated by MuiTypography-noWrap."""
-        flood = self.stubs[1]
+    def test_headlines_come_off_the_title_attribute(self):
         self.assertEqual(
-            flood.slug,
-            "1 dead and about 15 people may be missing as flash flood tears "
-            "through the Grand Canyon",
+            self.stubs[0].slug,
+            "Police in Switzerland make arrest after deadly rave shooting",
         )
-        self.assertNotIn("…", flood.slug)
 
     def test_the_timestamp_parses(self):
-        self.assertEqual(self.stubs[0].timestamp, datetime(2026, 8, 31, 6, 15))
-        self.assertEqual(self.stubs[0].timestamp_text, "31 Aug 26 06:15 ET")
+        self.assertEqual(self.stubs[0].timestamp, datetime(2026, 8, 31, 7, 29))
+        self.assertEqual(self.stubs[0].timestamp_text, "31 Aug 26 07:29 ET")
+
+    def test_rows_come_back_in_page_order(self):
+        stamps = [s.timestamp for s in self.stubs]
+        self.assertEqual(stamps, sorted(stamps, reverse=True))
 
     def test_the_version_comes_from_the_title_attribute_not_the_text(self):
-        self.assertEqual(self.stubs[0].version, 1)
-        self.assertEqual(self.stubs[1].version, 19)
+        self.assertEqual(self.stubs[0].version, 11)
+        self.assertEqual(self.stubs[1].version, 1)
 
     def test_a_high_version_marks_a_story_the_wire_keeps_rewriting(self):
-        self.assertFalse(self.stubs[0].is_update)
-        self.assertTrue(self.stubs[1].is_update)
+        self.assertTrue(self.stubs[0].is_update)
+        self.assertFalse(self.stubs[1].is_update)
 
-    def test_the_source_is_read_per_row(self):
-        self.assertEqual(self.stubs[0].source, "CNN")
-        self.assertEqual(self.stubs[2].source, "CNN Wire")
+    def test_affiliate_credits_survive_intact(self):
+        """Not every source is CNN — affiliates credit two call signs."""
+        self.assertEqual(self.stubs[1].source, "KCAL, KCBS")
+
+    def test_a_non_english_row_parses_like_any_other(self):
+        self.assertEqual(self.stubs[2].source, "CNN Español")
+        self.assertIn("Irán", self.stubs[2].slug)
 
     def test_the_dividers_are_not_mistaken_for_fields(self):
         for stub in self.stubs:
             self.assertNotIn("|", stub.source)
 
     def test_the_teaser_is_captured(self):
-        self.assertTrue(
-            self.stubs[0].teaser.startswith("A new potential tropical system")
-        )
+        self.assertTrue(self.stubs[0].teaser.startswith("Swiss police say"))
 
-    def test_content_types_come_off_the_media_icons(self):
-        self.assertIn(ContentType.SCRIPT, self.stubs[0].content_type)
-        self.assertIn(ContentType.VIDEO, self.stubs[1].content_type)
-        self.assertEqual(self.stubs[2].content_type, (ContentType.SCRIPT,))
-        self.assertFalse(self.stubs[2].has_video)
+    def test_content_types_come_off_the_media_icon_labels(self):
+        self.assertEqual(
+            self.stubs[0].content_type, (ContentType.SCRIPT, ContentType.IMAGE)
+        )
+        self.assertEqual(self.stubs[1].content_type, (ContentType.SCRIPT,))
+        self.assertTrue(self.stubs[0].has_script)
+        self.assertFalse(self.stubs[0].has_video)
+
+    def test_media_labels_are_matched_exactly_not_as_substrings(self):
+        """The MUI icon for a wire article is DescriptionIcon.
+
+        Searching it for "script" matches de-SCRIPT-ionicon: the right answer
+        by accident, and wrong the moment CNN renames an icon.
+        """
+        tree = parse_html(
+            '<div class="storyLineItemWrapperBox">'
+            '<span class="title" title="x">x</span>'
+            '<div class="mediaAndBundleIcons">'
+            '<svg data-testid="TranscriptIcon" aria-label="Transcript"></svg>'
+            "</div></div>"
+        )
+        stub = parse_row(tree.find(cls="storyLineItemWrapperBox"))
+        self.assertEqual(stub.content_type, ())
+
+    def test_icons_outside_the_media_container_are_not_counted(self):
+        """A row also holds a copy button; the page holds Planner and Downloads."""
+        for stub in self.stubs:
+            self.assertNotIn(ContentType.UNKNOWN, stub.content_type)
+            self.assertLessEqual(len(stub.content_type), 2)
+
+    def test_the_thumbnail_carries_cnn_s_own_slug_for_the_story(self):
+        self.assertEqual(self.stubs[0].id, "INT_SWITZERLAND_SHOOTING_RAVE")
+
+    def test_a_row_with_no_thumbnail_simply_has_no_id(self):
+        self.assertEqual(self.stubs[1].id, "")
 
     def test_fields_are_identified_by_content_not_position(self):
-        """A reordered metadata line still parses."""
-        reordered = fixture("cnn_listing.html").replace(
-            '<span class="MuiTypography-root MuiTypography-caption css-1d6aoja">31 Aug 26 06:15 ET</span>\n'
-            '        <span class="MuiTypography-root MuiTypography-body1 metadataDivider css-ypy096">|</span>\n'
-            '        <span class="MuiTypography-root MuiTypography-caption css-1d6aoja" title="CNN">CNN</span>',
-            '<span class="MuiTypography-root MuiTypography-caption css-1d6aoja" title="CNN">CNN</span>\n'
-            '        <span class="MuiTypography-root MuiTypography-body1 metadataDivider css-ypy096">|</span>\n'
-            '        <span class="MuiTypography-root MuiTypography-caption css-1d6aoja">31 Aug 26 06:15 ET</span>',
-        )
-        stub = parse_listing(reordered)[0]
+        """Swap the timestamp and the source; both must still resolve."""
+        original = fixture("cnn_listing.html")
+        stamp = '<span class="MuiTypography-root MuiTypography-caption css-1d6aoja">31 Aug 26 07:29 ET</span>'
+        source = '<span class="MuiTypography-root MuiTypography-caption css-1d6aoja" title="CNN">CNN</span>'
+        self.assertIn(stamp, original)
+        self.assertIn(source, original)
+
+        swapped = original.replace(stamp, "@@STAMP@@", 1).replace(source, stamp, 1)
+        swapped = swapped.replace("@@STAMP@@", source, 1)
+
+        stub = parse_listing(swapped)[0]
         self.assertEqual(stub.source, "CNN")
-        self.assertEqual(stub.timestamp, datetime(2026, 8, 31, 6, 15))
+        self.assertEqual(stub.timestamp, datetime(2026, 8, 31, 7, 29))
+        self.assertEqual(stub.version, 11)
 
     def test_a_row_with_no_headline_is_skipped_not_crashed_on(self):
         tree = parse_html('<div class="storyLineItemWrapperBox"><p>nothing</p></div>')
