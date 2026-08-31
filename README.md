@@ -54,13 +54,29 @@ python3 -m newscast validate rundown.txt --budget 1B=300 --cg-ceiling 42 --wpm 1
 The rules that still depend on an unanswered question — the half-hour clock, the bump CG
 ceiling — report `INFO ... not configured` rather than enforcing an invented threshold.
 
+## On the work machine
+
+```bash
+python3 -m newscast.capture doctor            # what can this machine actually do?
+python3 -m newscast.capture page --out cnn.html   # save the rendered DOM of the current tab
+```
+
+`doctor` reports Python, Selenium, Chrome and whether a debugging port is open. `page`
+attaches to a Chrome you have already logged into and saves what is on screen — it never logs
+in and never takes a password. Saved HTML is scrubbed for emails, tokens and session ids
+first; read it before sending it anywhere.
+
+The wire sites are React apps, so Chrome's own "Save Page As" writes an empty `<div id="root">`.
+Only the rendered DOM is useful — from this, or from DevTools → Elements → right-click
+`<html>` → Copy → Copy outerHTML.
+
 ## Tests
 
 ```bash
 python3 -m unittest discover -s tests -t .
 ```
 
-131 tests, no dependencies beyond the standard library. The parser round-trips all five §3
+191 tests, no dependencies beyond the standard library. The parser round-trips all five §3
 examples byte for byte; `show_clean.txt` must stay silent and `show_broken.txt` must keep
 breaking every rule. The monitor rule (§5 R2) is checked against all five §3 examples
 directly, since those examples are what pinned it down. Per §10, the validator is the eval

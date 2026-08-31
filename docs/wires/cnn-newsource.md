@@ -228,6 +228,22 @@ CNN_NEWSOURCE_PASSWORD
 
 Read at runtime, never logged, never written to disk.
 
+## Getting real markup into the repo
+
+The fixture the parser is tested against was reconstructed from screenshots, so it pins the
+parsing logic without proving the markup. Replacing it takes one of:
+
+```bash
+python3 -m newscast.capture page --out cnn-landing.html
+```
+
+or, with no code at all: DevTools → Elements → right-click `<html>` → Copy → Copy outerHTML,
+and paste into a file. Chrome's "Save Page As" does **not** work here — this is a React app,
+so the saved source is an empty `<div id="root">`.
+
+Either way the file needs reading before it travels. `newscast.capture` scrubs emails, bearer
+tokens, JWTs, key-shaped JSON fields and long hex ids, but that is best effort.
+
 ## Still unknown
 
 1. **The date filter.** Without it there is no "past day" and no ~200 stories.
