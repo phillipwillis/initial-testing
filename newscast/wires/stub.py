@@ -47,7 +47,12 @@ class StoryStub:
     # richer: the wire tells us what form the material is in and how long it
     # runs, which is most of what slotting needs (§2, §6 phase 2).
     story_number: str = ""     # "WE-001MO" — what the producer types into Source
-    market: str = ""           # "Seattle-Tacoma, WA"
+
+    # Restrictions on using the material, NOT the market it came from. The
+    # expanded story's detail table labels this field "Embargo:", and it holds
+    # values like "Los Angeles, CA" and "THIRD PARTY EMBARGO". An embargo is a
+    # legal constraint on airing, so it is never dropped silently.
+    embargo: str = ""          # "Los Angeles, CA", "THIRD PARTY EMBARGO"
     footage_type: str = ""     # VO/SIL, DONUT, PKG …
 
     # The duration CNN prints in the listing. NOT the read time and NOT

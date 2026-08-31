@@ -33,7 +33,12 @@ from typing import Any, Callable, Optional
 
 from newscast.capture import DEFAULT_DEBUG_PORT, attach, scrub_html
 from newscast.env import describe, load_env, require
-from newscast.wires.cnn import LANDING_URL, parse_expanded_story, parse_listing
+from newscast.wires.cnn import (
+    LANDING_URL,
+    parse_expanded_story,
+    parse_listing,
+    parse_story_details,
+)
 from newscast.wires.cnn_script import parse_wire_script
 
 CNN_HOME = "https://newsource.ns.cnn.com/"
@@ -180,37 +185,52 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
     # The list scrolls inside its own container, not the window. Scrolling the
     # window does nothing at all, which looks exactly like a list that has
     # stopped loading.
+    # Pick the scrollable ancestor that actually contains the story rows. The
+    # page has several scrollable panes — the live-channel rail is one — and a
+    # 322px-tall one was chosen last run, which moved but was not the list.
     scroller = driver.execute_script(
         """
-        const row = document.querySelector('.storyLineItemWrapperBox');
-        if (!row) return null;
-        let node = row.parentElement;
-        while (node && node !== document.body) {
-          const style = getComputedStyle(node);
-          const scrolls = /auto|scroll/.test(style.overflowY);
-          if (scrolls && node.scrollHeight > node.clientHeight + 10) {
-            window.__newscastScroller = node;
-            return {tag: node.tagName.toLowerCase(), cls: (node.className || '').slice(0, 90),
-                    scrollHeight: node.scrollHeight, clientHeight: node.clientHeight};
+        const rows = Array.from(document.querySelectorAll('.storyLineItemWrapperBox'));
+        if (!rows.length) return null;
+        const scored = new Map();
+        for (const row of rows) {
+          let node = row.parentElement;
+          while (node && node !== document.body) {
+            const style = getComputedStyle(node);
+            if (/auto|scroll/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 10) {
+              scored.set(node, (scored.get(node) || 0) + 1);
+            }
+            node = node.parentElement;
           }
-          node = node.parentElement;
         }
-        window.__newscastScroller = null;
-        return null;
+        let best = null, bestRows = 0;
+        for (const [node, count] of scored) {
+          if (count > bestRows || (count === bestRows && best && node.clientHeight > best.clientHeight)) {
+            best = node; bestRows = count;
+          }
+        }
+        window.__newscastScroller = best;
+        if (!best) return {note: 'no scrollable ancestor contains rows; falling back to the window'};
+        return {tag: best.tagName.toLowerCase(), cls: (best.className || '').slice(0, 90),
+                rowsInside: bestRows, scrollHeight: best.scrollHeight, clientHeight: best.clientHeight};
         """
     )
 
     counts: list[int] = []
+    tops: list[Any] = []
     for index in range(scroll_passes):
         counts.append(len(parse_listing(driver.page_source)))
-        driver.execute_script(
-            """
-            const el = window.__newscastScroller;
-            if (el) { el.scrollTop = el.scrollHeight; }
-            else { window.scrollTo(0, document.body.scrollHeight); }
-            """
+        tops.append(
+            driver.execute_script(
+                """
+                const el = window.__newscastScroller;
+                if (el) { el.scrollTop = el.scrollHeight; return Math.round(el.scrollTop); }
+                window.scrollTo(0, document.body.scrollHeight);
+                return Math.round(window.scrollY);
+                """
+            )
         )
-        time.sleep(1.5)
+        time.sleep(1.8)
         if index >= 2 and counts[-1] == counts[-2] == counts[-3]:
             time.sleep(2.0)
             if len(parse_listing(driver.page_source)) == counts[-1]:
@@ -225,6 +245,7 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
 
     return {
         "scroll_container": scroller,
+        "scroll_top_after_each_pass": tops,
         "rows_after_each_scroll": counts,
         "rows_final": len(stubs),
         "rows_with_a_clock_time": len(timed),
@@ -347,12 +368,13 @@ def probe_expand(driver, out: str, **options) -> dict[str, Any]:
 
 
 def probe_duration(driver, out: str, **options) -> dict[str, Any]:
-    """What the listing's duration actually corresponds to.
+    """What the printed duration actually corresponds to.
 
     Phil: the script may run 20 seconds while the printed duration counts the
-    b-roll in the file, and packages are worst. So compare three numbers on one
-    story — what the listing prints, what the media element reports, and what
-    the script reads at — and see which agree.
+    b-roll in the file, and packages are worst. So put four numbers against one
+    story — what the listing prints, what the detail table calls TRT, what the
+    media file reports, and what our own estimator says the copy reads at — and
+    see which agree.
     """
     wait_for_rows(driver)
     opened = _expand_first(driver, want_video=True)
@@ -360,40 +382,85 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
         return {"error": "no video row found to expand", "attempt": opened}
     time.sleep(4.0)
 
-    index = opened["index"]
-    stubs = parse_listing(driver.page_source)
-    stub = stubs[index] if index < len(stubs) else None
+    html = driver.page_source
+    _write(out, "expanded-video.html", scrub_html(html)[0])
 
-    media = driver.execute_script(
+    # The detail table is the reliable correlation: the listing re-renders while
+    # the probe works — the row count changed between probes on the last run —
+    # so a row index taken before expanding may point at a different story after.
+    details = parse_story_details(html)
+    story_number = details.get("Story Number", "")
+
+    stub = None
+    for candidate in parse_listing(html):
+        if story_number and candidate.story_number == story_number:
+            stub = candidate
+            break
+
+    # Media elements are created with no source loaded (readyState 0 reports
+    # nothing), so metadata has to be asked for and waited on.
+    media = driver.execute_async_script(
         """
-        return Array.from(document.querySelectorAll('video, audio')).map(v => ({
-          duration: (isFinite(v.duration) ? v.duration : null),
-          readyState: v.readyState,
-          src: (v.currentSrc || v.src || '').split('?')[0]
-        }));
+        const done = arguments[arguments.length - 1];
+        const videos = Array.from(document.querySelectorAll('video'))
+          .filter(v => (v.currentSrc || v.src));
+        if (!videos.length) { done([]); return; }
+
+        let settled = 0;
+        const out = videos.map(() => null);
+        const finish = () => { if (++settled >= videos.length) done(out); };
+
+        videos.forEach((v, i) => {
+          const record = () => {
+            out[i] = {
+              duration: isFinite(v.duration) ? Math.round(v.duration * 100) / 100 : null,
+              readyState: v.readyState,
+              src: (v.currentSrc || v.src || '').split('?')[0].slice(0, 200)
+            };
+          };
+          if (v.readyState >= 1) { record(); finish(); return; }
+          const onMeta = () => { record(); cleanup(); finish(); };
+          const onErr = () => { record(); cleanup(); finish(); };
+          const cleanup = () => {
+            v.removeEventListener('loadedmetadata', onMeta);
+            v.removeEventListener('error', onErr);
+          };
+          v.addEventListener('loadedmetadata', onMeta);
+          v.addEventListener('error', onErr);
+          try { v.preload = 'metadata'; v.load(); } catch (e) { onErr(); }
+        });
+
+        setTimeout(() => { videos.forEach((v, i) => { if (!out[i]) out[i] = {
+          duration: isFinite(v.duration) ? v.duration : null, readyState: v.readyState,
+          src: (v.currentSrc || v.src || '').split('?')[0].slice(0, 200), timedOut: true }; });
+          done(out); }, 12000);
         """
     ) or []
 
-    text = parse_expanded_story(driver.page_source)
-    script = parse_wire_script(text) if text else None
+    loaded = [m for m in media if m and m.get("duration")]
 
     from newscast.readtime import estimate_read_time
 
+    script = parse_wire_script(details.get("Script", "")) if details.get("Script") else None
     read_seconds = None
+    anchor_copy = ""
     if script:
-        spoken = "\n".join(
-            part for part in (script.lead_in, script.body, script.tag) if part
+        anchor_copy = "\n".join(
+            part for part in (script.lead_in, script.vo_script, script.tag) if part
         )
-        read_seconds = estimate_read_time(spoken)
+        read_seconds = estimate_read_time(anchor_copy) if anchor_copy else None
 
     return {
-        "expanded_row": opened,
-        "story_number": stub.story_number if stub else None,
-        "footage_type": stub.footage_type if stub else None,
+        "story_number": story_number,
+        "footage_type": details.get("Footage Type"),
         "listing_duration_seconds": stub.wire_duration_seconds if stub else None,
-        "media_elements": media,
+        "detail_table_trt": details.get("TRT"),
         "estimated_read_seconds": read_seconds,
-        "trt_in_script": script.trt if script else None,
+        "anchor_copy_chars": len(anchor_copy),
+        "media_with_a_duration": loaded[:6],
+        "media_elements_seen": len(media),
+        "media_without_a_duration": len(media) - len(loaded),
+        "matched_listing_row": stub is not None,
     }
 
 

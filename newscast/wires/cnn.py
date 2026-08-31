@@ -95,7 +95,7 @@ class RowMetadata:
     version: Optional[int] = None
     source: str = ""
     story_number: str = ""
-    market: str = ""
+    embargo: str = ""
     footage_type: str = ""
     wire_duration_seconds: Optional[float] = None
 
@@ -157,7 +157,9 @@ def _classify_metadata(metadata: Node) -> RowMetadata:
     if leftovers:
         found.source = leftovers[0]
     if len(leftovers) > 1:
-        found.market = leftovers[1]
+        # The expanded story's detail table names this field "Embargo:". It is
+        # a restriction on airing, not the market the footage came from.
+        found.embargo = leftovers[1]
 
     return found
 
@@ -230,7 +232,7 @@ def parse_row(scope: Node) -> Optional[StoryStub]:
         teaser=description.text.strip() if description is not None else "",
         content_type=parse_media_types(scope),
         story_number=meta.story_number,
-        market=meta.market,
+        embargo=meta.embargo,
         footage_type=meta.footage_type,
         wire_duration_seconds=meta.wire_duration_seconds,
     )
@@ -253,6 +255,39 @@ def parse_expanded_story(html: str) -> str:
     """
     preview = parse_html(html).find(cls=ARTICLE_PREVIEW)
     return preview.block_text if preview is not None else ""
+
+
+DETAIL_FIELDS = (
+    "Story Number",
+    "Title",
+    "Description",
+    "Source",
+    "Embargo",
+    "Footage Type",
+    "TRT",
+    "Script",
+)
+
+
+def parse_story_details(html: str) -> dict[str, str]:
+    """The label/value table an expanded story carries.
+
+    Cleaner than anything in the collapsed listing: `Story Number: WE-011MO`,
+    `Footage Type: SOT`, `TRT: 00:19`, `Embargo: Los Angeles, CA`, and the whole
+    script under `Script:`.
+
+    The page renders the table more than once (the layout keeps a second copy
+    for a narrower breakpoint), so the first value for each label wins.
+    """
+    details: dict[str, str] = {}
+    for row in parse_html(html).find_all(tag="tr"):
+        cells = row.find_all(tag="td") or row.find_all(tag="th")
+        if len(cells) < 2:
+            continue
+        label = cells[0].text.strip().rstrip(":").strip()
+        if label in DETAIL_FIELDS and label not in details:
+            details[label] = cells[1].block_text.strip()
+    return details
 
 
 def _row_scopes(root: Node) -> list[Node]:

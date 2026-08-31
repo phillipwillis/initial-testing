@@ -16,23 +16,36 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
-# Section markers, in the spellings the wire actually uses.
-LEAD_IN_MARKERS = ("--LEAD IN--", "--LEAD-IN--", "--LEADIN--", "LEAD IN", "LEAD-IN")
-VO_SCRIPT_MARKERS = ("--VO SCRIPT--", "--VOSCRIPT--", "VO SCRIPT", "VO-SCRIPT")
-PKG_MARKERS = ("--REPORTER PKG-AS FOLLOWS--", "--PKG SCRIPT--", "--PACKAGE SCRIPT--")
-TAG_MARKERS = ("--TAG--", "--SUGGESTED TAG--")
-SUPERS_MARKERS = ("--SUPERS--",)
-END_MARKERS = (
-    "-----END-----CNN.SCRIPT-----",
-    "-----END-----",
-    "--KEYWORD TAGS--",
-    "--KEYWORDS--",
-)
+# Section markers. Real wire copy is inconsistent about spacing inside and
+# around the dashes — one story carries "--TAG--" and the next "--TAG --" — so
+# these are matched as patterns that tolerate whitespace anywhere a human might
+# have left one, not as literal strings.
+LEAD_IN_MARKERS = ("LEAD IN", "LEAD-IN", "LEADIN")
+VO_SCRIPT_MARKERS = ("VO SCRIPT", "VOSCRIPT", "VO-SCRIPT")
+PKG_MARKERS = ("REPORTER PKG-AS FOLLOWS", "PKG SCRIPT", "PACKAGE SCRIPT")
+SOT_MARKERS = ("SOT",)
+TAG_MARKERS = ("TAG", "SUGGESTED TAG")
+SUPERS_MARKERS = ("SUPERS",)
+END_MARKERS = ("END", "KEYWORD TAGS", "KEYWORDS")
 
 # Footage types that mean "a reporter package", not anchor copy.
 PACKAGE_FOOTAGE_TYPES = frozenset({"PKG", "DONUT", "LOOK LIVE"})
 
 _TIME_SPAN_RE = re.compile(r"(?:\d{1,2}:|:)\d{2}\s*-\s*(?:\d{1,2}:|:)\d{2}")
+
+
+def _marker_pattern(name: str) -> str:
+    """A marker as a pattern: dashes, optional spaces, the name, more dashes.
+
+    Matches `--TAG--`, `--TAG --`, `-- TAG --` and `-----END-----` alike, with
+    the words inside separated by any whitespace.
+    """
+    words = r"[\s-]*".join(re.escape(word) for word in name.split())
+    return rf"-{{2,}}\s*{words}\s*-*"
+
+
+def _find_marker(text: str, name: str, start: int = 0):
+    return re.compile(_marker_pattern(name), re.I).search(text, start)
 
 
 @dataclass
@@ -59,6 +72,7 @@ class WireScript:
     lead_in: str = ""
     vo_script: str = ""
     pkg_body: str = ""
+    sot_body: str = ""    # the transcript of a soundbite, under "--SOT--"
     tag: str = ""
     supers: list[Super] = field(default_factory=list)
     raw: str = ""
@@ -90,38 +104,22 @@ def _line_field(text: str, label: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _between(text: str, start: str, end: str) -> str:
-    pattern = re.compile(rf"(?is){re.escape(start)}\s*(.*?)\s*{re.escape(end)}")
-    match = pattern.search(text)
-    return match.group(1).strip() if match else ""
+def _section(text: str, starts: Iterable[str], ends: Iterable[str]) -> str:
+    """The text between the first of `starts` and the nearest following end.
 
-
-def _between_any(
-    text: str, starts: Iterable[str], ends: Iterable[str]
-) -> str:
-    """First non-empty section found across every spelling combination."""
-    for start in starts:
-        if start not in text.upper() and start not in text:
+    Runs to the end of the script when no end marker follows, which is what a
+    truncated or unterminated section needs.
+    """
+    for name in starts:
+        opening = _find_marker(text, name)
+        if not opening:
             continue
-        for end in ends:
-            found = _between(text, start, end)
-            if found:
-                return found
-    return ""
-
-
-def _after(text: str, starts: Iterable[str], ends: Iterable[str]) -> str:
-    """A section that runs to an end marker, or to the end of the script."""
-    for start in starts:
-        match = re.search(re.escape(start), text, re.I)
-        if not match:
-            continue
-        tail = text[match.end():].lstrip("\n")
+        tail = text[opening.end():].lstrip("\n")
         cut = len(tail)
-        for end in ends:
-            stop = re.search(re.escape(end), tail, re.I)
-            if stop:
-                cut = min(cut, stop.start())
+        for end_name in ends:
+            closing = _find_marker(tail, end_name)
+            if closing:
+                cut = min(cut, closing.start())
         section = tail[:cut].strip()
         if section:
             return section
@@ -132,28 +130,59 @@ def _is_timecode(line: str) -> bool:
     return bool(_TIME_SPAN_RE.search(line))
 
 
+_DAYS = frozenset(
+    "monday tuesday wednesday thursday friday saturday sunday".split()
+)
+
+
+def _strip_slate(lines: list[str]) -> list[str]:
+    """Drop the leading day and location.
+
+    A SUPERS block opens with a slate — the day the material was shot and where
+    — before any supers:
+
+        Sunday
+        Los Angeles
+        Dr. Quynh Vo-Hanser
+        Kaiser Permanente South Bay
+
+    The day is recognisable, and the line after it is the location.
+    """
+    if lines and lines[0].strip().lower() in _DAYS:
+        return lines[2:] if len(lines) > 1 else []
+    return lines
+
+
 def parse_supers(block: str) -> list[Super]:
     """Parse the SUPERS block into name / title / timecode triples.
 
-    The block is a run of timecodes, each followed by a name line and a title
-    line:
+    Two shapes appear in real copy. A package times each super:
 
-        Saturday
-        Seattle
+        Saturday · Seattle · :05 - :07 · Kelly · Seattle Resident
 
-        :05 - :07
-        Kelly
-        Seattle Resident
+    while a single soundbite has no timecodes at all, because there is only one
+    speaker:
 
-    Position after the timecode identifies the fields, rather than a guess at
-    what a name looks like. Real supers include single-word names like "Kelly",
-    which any "looks like a person" heuristic gets wrong.
+        Sunday · Los Angeles · Dr. Quynh Vo-Hanser · Kaiser Permanente South Bay
 
-    Lines before the first timecode are slates — the day and the location — and
-    are skipped. A name with no title after it is dropped: in real wire copy
-    that is a slate too, not a person.
+    Where timecodes exist they identify the fields by position after them,
+    rather than by a guess at what a name looks like — real supers include
+    single-word names like "Kelly", which any such heuristic drops. Where there
+    are none, the lines after the slate pair up as name and title.
+
+    The pairing fallback is an inference from two samples. More SUPERS blocks
+    without timecodes would confirm it.
     """
     lines = [line.strip() for line in _normalise(block).splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    if not any(_is_timecode(line) for line in lines):
+        rest = _strip_slate(lines)
+        return [
+            Super(name=rest[i], title=rest[i + 1])
+            for i in range(0, len(rest) - 1, 2)
+        ]
 
     supers: list[Super] = []
     index = 0
@@ -182,19 +211,22 @@ def parse_wire_script(raw: str) -> WireScript:
     """Parse a CNN Newsource script into its sections."""
     text = _normalise(raw)
 
-    lead_in_ends = VO_SCRIPT_MARKERS + PKG_MARKERS + TAG_MARKERS + END_MARKERS
-    vo_ends = TAG_MARKERS + END_MARKERS
+    body_starts = VO_SCRIPT_MARKERS + PKG_MARKERS + SOT_MARKERS
+    lead_in_ends = body_starts + TAG_MARKERS + END_MARKERS
+    body_ends = TAG_MARKERS + END_MARKERS
+    supers_ends = LEAD_IN_MARKERS + body_starts
 
     script = WireScript(
         raw=raw,
         title=_line_field(text, "Title"),
         trt=_line_field(text, "TRT"),
         footage_type=_line_field(text, "Footage Type").upper(),
-        lead_in=_between_any(text, LEAD_IN_MARKERS, lead_in_ends),
-        vo_script=_after(text, VO_SCRIPT_MARKERS, vo_ends),
-        pkg_body=_after(text, PKG_MARKERS, vo_ends),
-        tag=_after(text, TAG_MARKERS, END_MARKERS),
-        supers=parse_supers(_between_any(text, SUPERS_MARKERS, LEAD_IN_MARKERS + PKG_MARKERS + VO_SCRIPT_MARKERS)),
+        lead_in=_section(text, LEAD_IN_MARKERS, lead_in_ends),
+        vo_script=_section(text, VO_SCRIPT_MARKERS, body_ends),
+        pkg_body=_section(text, PKG_MARKERS, body_ends),
+        sot_body=_section(text, SOT_MARKERS, VO_SCRIPT_MARKERS + TAG_MARKERS + END_MARKERS),
+        tag=_section(text, TAG_MARKERS, END_MARKERS),
+        supers=parse_supers(_section(text, SUPERS_MARKERS, supers_ends)),
     )
 
     # Last resort: a script with no markers at all still has copy in it, and a

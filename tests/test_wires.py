@@ -241,8 +241,8 @@ class VideoRowTests(unittest.TestCase):
         self.assertEqual(self.stubs[0].id, "NE-005MO")
 
     def test_the_market_is_read(self):
-        self.assertEqual(self.stubs[0].market, "New York, NY")
-        self.assertEqual(self.stubs[1].market, "Seattle-Tacoma, WA")
+        self.assertEqual(self.stubs[0].embargo, "New York, NY")
+        self.assertEqual(self.stubs[1].embargo, "Seattle-Tacoma, WA")
 
     def test_the_source_is_the_affiliate_not_the_market(self):
         """Positional parsing puts the market in the source the first time a
@@ -261,7 +261,7 @@ class VideoRowTests(unittest.TestCase):
         article = parse_listing(fixture("cnn_listing.html"))[0]
         self.assertFalse(article.is_video_record)
         self.assertIsNone(article.wire_duration_seconds)
-        self.assertEqual(article.market, "")
+        self.assertEqual(article.embargo, "")
 
 
 class DateOnlyRowTests(unittest.TestCase):

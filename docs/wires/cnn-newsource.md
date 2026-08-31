@@ -227,6 +227,34 @@ CNN_NEWSOURCE_PASSWORD
 
 Read at runtime, never logged, never written to disk.
 
+## The front end runs on a JSON API
+
+The probe read the browser's own performance timeline on a freshly loaded landing page. The
+SPA is a client for a documented-looking REST API:
+
+| Host | Path | What it is |
+|---|---|---|
+| `newsource-content-api-530` | **`/api/v3/stories`** | **the story listing** |
+| `newsource-content-api-530` | `/api/refdata` | reference data — categories, footage types |
+| `newsource-content-api-530` | `/api/featuredContentCategories/getActive/Domestic` | the featured rail |
+| `newsource-content-api-530` | `/api/liveChannel`, `/api/liveChannel/streams`, `/api/coverage/channels/liveAndUpcoming` | live channels |
+| `newsource-content-api-530` | `/api/notifications`, `/api/headsUp` | alerts |
+| `newsource-download-api-530` | **`/api/download/downloadRequest`** | **how material is fetched** |
+| `newsource-auth-api-530` | `/api/portal/login`, `/api/refresh` | auth and token refresh |
+| `newsource-socket-api-530` | `/socket.io/` | realtime push — why the list changes under you |
+
+**This is the single most consequential finding for §10.3.** `/api/v3/stories` is what the
+listing renders; if affiliates may call it, phase 0 collapses from scroll-and-scrape into one
+request, with real IDs, real field names and no selector rot. `/api/download/downloadRequest`
+is likewise how §11.7's "download the video" would work.
+
+`/api/refresh` also explains the 401s in the console on the very first screenshot: the access
+token expires and is refreshed, and a request landing in the gap fails.
+
+**This is a question for the CNN rep, not a decision to make unilaterally.** Ask whether the
+station's licence covers programmatic access to these endpoints. Until there is an answer, the
+DOM path stays the plan — but the answer is worth having before more is built on scraping.
+
 ## There is more than one row schema
 
 The most important thing the captures settled. A **wire article** row reads:
@@ -282,7 +310,7 @@ It carries what slotting needs, before a story is ever opened:
 | Field | Example | Why it matters |
 |---|---|---|
 | Story Number | `WE-001MO` | The id. This is what a producer types into the rundown's Source column (`docs/inception.md`) |
-| Market | `Seattle-Tacoma, WA` | §7 `viewer_impact` — an Idaho Falls show weights local and regional hardest |
+| Embargo | `Los Angeles, CA` | Restrictions on airing — see below |
 | Footage type | `VO/SIL`, `DONUT`, `PKG` | Maps onto the §3 segment types. The wire is saying what the material can become |
 | Duration | `01:02` | **A hint only — see below** |
 
@@ -350,6 +378,35 @@ so the saved source is an empty `<div id="root">`.
 
 Either way the file needs reading before it travels. `newscast.capture` scrubs emails, bearer
 tokens, JWTs, key-shaped JSON fields and long hex ids, but that is best effort.
+
+## The expanded story's detail table
+
+Cleaner than anything in the collapsed listing, and it corrects two things recorded here
+earlier:
+
+```
+Story Number:  WE-011MO
+Title:         CA: RARE TRIPLETS/DOCTOR-ALL THE SAME SEX
+Description:   A Los Angeles couple welcomed a very rare set of triplets.
+Source:        KABC
+Embargo:       Los Angeles, CA
+Footage Type:  SOT
+TRT:           00:19
+Script:        <the whole script>
+```
+
+**The fourth field in a video row's metadata line is Embargo, not market.** These notes called
+it a market and suggested using it for §7 `viewer_impact`. It is a restriction on airing —
+other values include `THIRD PARTY EMBARGO` — so treating it as "where this is from" would
+have been wrong twice over: a useless signal for local weighting, and a legal constraint
+dropped on the floor. The field is `StoryStub.embargo` and is never discarded silently.
+
+**The panel does carry `Footage Type:` and `TRT:`.** An earlier note here said it did not,
+because the first capture only exposed `.article-preview` — the script body — and the detail
+table sits beside it.
+
+The table is rendered twice (a second copy for a narrower breakpoint), so the first value for
+each label wins.
 
 ## The expanded panel
 
@@ -430,6 +487,33 @@ reachable, and whether affiliates may call it, is the question to put to the CNN
 Five buttons on the landing page: three `Download`, two `Copy`, all `<button>` with no
 `href`, so the transfer is script-driven rather than a link. Nothing has been clicked — a
 download on a licensed account has consequences a probe has no business causing.
+
+## Marker spelling is inconsistent
+
+Real copy carries `--TAG--` on one story and `--TAG --` on the next, and `--SOT --` with a
+trailing space. Markers are matched as patterns tolerating whitespace anywhere a human might
+have left one, rather than as literal strings — matching literally drops whole sections
+depending on which story it is.
+
+A `--SOT--` section also exists, holding a soundbite transcript, alongside `--VO SCRIPT--`
+and `--REPORTER PKG-AS FOLLOWS--`.
+
+## SUPERS comes in two shapes
+
+A package times each super. A single soundbite has no timecodes at all, because there is only
+one speaker:
+
+```
+Sunday                              Saturday
+Los Angeles                         Seattle
+Dr. Quynh Vo-Hanser                 :05 - :07
+Kaiser Permanente South Bay         Kelly
+                                    Seattle Resident
+```
+
+Both open with a slate — the day, then the location. Where timecodes exist they identify the
+fields; where there are none, the lines after the slate pair up as name and title. That
+pairing is an inference from two samples and would benefit from more.
 
 ## Still unknown
 
