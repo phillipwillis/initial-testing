@@ -18,8 +18,10 @@ is three rows lifted verbatim from it.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Optional
 
+from newscast.markup import parse_duration
 from newscast.wires.dom import Node, parse_html
 from newscast.wires.stub import ContentType, StoryStub, parse_timestamp
 
@@ -27,6 +29,25 @@ CNN_SOURCE = "CNN Newsource"
 LANDING_URL = "https://newsource.ns.cnn.com/landing"
 
 _VERSION_RE = re.compile(r"^\s*version\b\s*(?P<n>\d+)?", re.I)
+
+# "WE-001MO", "NE-005MO" — the Story Number, confirmed by cross-reference: the
+# same code appears in the collapsed row's metadata and as "Story Number:" in
+# the expanded panel. This is what a producer types into the rundown's Source
+# column (docs/inception.md).
+_STORY_NUMBER_RE = re.compile(r"^[A-Z]{2,3}-\d{3,4}[A-Z]{2}$")
+
+# "01:02", "01:55" — the running time of the material.
+_DURATION_RE = re.compile(r"^\d{1,2}:\d{2}(?::\d{2})?$")
+
+# Forms the wire ships video in. These line up with the §3 segment types, which
+# is what makes the video schema worth parsing: the wire is telling us what the
+# material can become before we have opened it.
+FOOTAGE_TYPES = frozenset(
+    {
+        "VO", "VO/SIL", "SIL", "SOT", "VOSOT", "VO/SOT",
+        "PKG", "DONUT", "LOOK LIVE", "RAW", "LIVE", "WRAP", "CUT SOUND",
+    }
+)
 
 # The Media icons carry a real aria-label, which is the semantic name and the
 # thing to match on. Matched exactly, never as a substring: the MUI icon name
@@ -67,39 +88,77 @@ def _caption_fields(metadata: Node) -> list[Node]:
     ]
 
 
-def _classify_metadata(metadata: Node) -> tuple[str, Optional[int], str]:
-    """Return (timestamp_text, version, source).
-
-    Identified by content, not position: the timestamp is the field that parses
-    as one, the version is the field that says so, and the source is what is
-    left. A relabelled or reordered row still comes out right.
-    """
-    timestamp_text = ""
+@dataclass
+class RowMetadata:
+    timestamp_text: str = ""
     version: Optional[int] = None
-    leftovers: list[Node] = []
+    source: str = ""
+    story_number: str = ""
+    market: str = ""
+    footage_type: str = ""
+    duration_seconds: Optional[float] = None
 
-    for field in _caption_fields(metadata):
-        text = field.text.strip()
-        if not timestamp_text and parse_timestamp(text):
-            timestamp_text = text
+
+def _classify_metadata(metadata: Node) -> RowMetadata:
+    """Read the metadata line, whichever schema the row uses.
+
+    There is more than one. A wire article reads:
+
+        31 Aug 26 07:29 ET | CNN | Version 11
+
+    while a video record from an affiliate reads:
+
+        31 Aug 26 06:52 ET | WABC | NE-005MO | New York, NY | VO/SIL | 01:02
+
+    and a graphic reads simply:
+
+        31 Aug 26 | CNN Weather via CNN Newsource
+
+    So fields are identified by what they contain rather than by where they sit,
+    and whatever is left over is source then market, in order. Positional
+    parsing would silently put a market in the source column the first time a
+    row shape changed.
+    """
+    found = RowMetadata()
+    leftovers: list[str] = []
+
+    for node in _caption_fields(metadata):
+        text = node.text.strip()
+
+        if not found.timestamp_text and parse_timestamp(text):
+            found.timestamp_text = text
             continue
+
         match = _VERSION_RE.match(text)
-        if match and version is None:
-            # The title attribute holds the bare number ("1") where the text
-            # reads "Version 1"; prefer it, fall back to the digits in the text.
-            raw = field.attr("title") or (match.group("n") or "")
+        if match and found.version is None:
+            # The title attribute holds the bare number where the text reads
+            # "Version 11"; prefer it, fall back to the digits in the text.
+            raw = node.attr("title") or (match.group("n") or "")
             if raw.isdigit():
-                version = int(raw)
+                found.version = int(raw)
                 continue
-        leftovers.append(field)
 
-    source = ""
-    for field in leftovers:
-        source = field.attr("title") or field.text.strip()
-        if source:
-            break
+        if not found.story_number and _STORY_NUMBER_RE.match(text):
+            found.story_number = text
+            continue
 
-    return timestamp_text, version, source
+        if found.duration_seconds is None and _DURATION_RE.match(text):
+            found.duration_seconds = parse_duration(text)
+            continue
+
+        if not found.footage_type and text.upper() in FOOTAGE_TYPES:
+            found.footage_type = text.upper()
+            continue
+
+        leftovers.append(node.attr("title") or text)
+
+    leftovers = [x for x in leftovers if x]
+    if leftovers:
+        found.source = leftovers[0]
+    if len(leftovers) > 1:
+        found.market = leftovers[1]
+
+    return found
 
 
 def parse_media_types(scope: Node) -> tuple[ContentType, ...]:
@@ -155,26 +214,44 @@ def parse_row(scope: Node) -> Optional[StoryStub]:
     # deciding to shorten what it renders.
     slug = title.attr("title") or title.text
 
-    timestamp_text, version, source = "", None, ""
-    metadata = scope.find(cls="metadata")
-    if metadata is not None:
-        timestamp_text, version, source = _classify_metadata(metadata)
+    metadata_node = scope.find(cls="metadata")
+    meta = _classify_metadata(metadata_node) if metadata_node is not None else RowMetadata()
 
     description = scope.find(cls="description")
 
     return StoryStub(
-        id=parse_story_slug(scope),
+        id=meta.story_number or parse_story_slug(scope),
         slug=slug.strip(),
-        source=source or CNN_SOURCE,
-        timestamp=parse_timestamp(timestamp_text),
-        timestamp_text=timestamp_text,
-        version=version,
+        source=meta.source or CNN_SOURCE,
+        timestamp=parse_timestamp(meta.timestamp_text),
+        timestamp_text=meta.timestamp_text,
+        version=meta.version,
         teaser=description.text.strip() if description is not None else "",
         content_type=parse_media_types(scope),
+        story_number=meta.story_number,
+        market=meta.market,
+        footage_type=meta.footage_type,
+        duration_seconds=meta.duration_seconds,
     )
 
 
 ROW_CONTAINER = "storyLineItemWrapperBox"
+
+
+ARTICLE_PREVIEW = "article-preview"
+
+
+def parse_expanded_story(html: str) -> str:
+    """The script text from an expanded row, with its line structure intact.
+
+    Expanding a row renders the wire script as a run of `<p>` inside
+    `.article-preview`. The markers that matter — `--SUPERS--`, `--LEAD IN--`,
+    `--REPORTER PKG-AS FOLLOWS--` — are line-oriented, so the text has to come
+    out with those boundaries preserved. Feed the result to
+    `cnn_script.parse_wire_script`.
+    """
+    preview = parse_html(html).find(cls=ARTICLE_PREVIEW)
+    return preview.block_text if preview is not None else ""
 
 
 def _row_scopes(root: Node) -> list[Node]:

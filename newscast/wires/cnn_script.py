@@ -65,12 +65,20 @@ class WireScript:
 
     @property
     def is_package(self) -> bool:
-        return self.footage_type.upper() in PACKAGE_FOOTAGE_TYPES
+        """A package either says so, or carries a reporter track.
+
+        The expanded panel on the listing has no `Footage Type:` line — that
+        appears in the search result the previous implementation read — so the
+        presence of the reporter section has to count on its own.
+        """
+        return bool(self.pkg_body) or self.footage_type.upper() in PACKAGE_FOOTAGE_TYPES
 
     @property
     def body(self) -> str:
         """The main copy, whichever section the wire put it in."""
-        return self.pkg_body if self.is_package else self.vo_script
+        if self.is_package:
+            return self.pkg_body or self.vo_script
+        return self.vo_script or self.pkg_body
 
 
 def _normalise(text: str) -> str:
@@ -124,53 +132,48 @@ def _is_timecode(line: str) -> bool:
     return bool(_TIME_SPAN_RE.search(line))
 
 
-def _looks_like_a_name(line: str) -> bool:
-    if any(ch.isdigit() for ch in line):
-        return False
-    if not (3 <= len(line) <= 60):
-        return False
-    if len(line.split()) < 2:
-        return False
-    return line[0].isalpha() and line[0].isupper()
-
-
 def parse_supers(block: str) -> list[Super]:
     """Parse the SUPERS block into name / title / timecode triples.
 
-    The block is a run of `:00-:06` timecodes, each followed by a name line and
-    a title line. A name with no title after it is dropped — in real wire copy
-    that pattern is a location or a slate, not a person.
+    The block is a run of timecodes, each followed by a name line and a title
+    line:
+
+        Saturday
+        Seattle
+
+        :05 - :07
+        Kelly
+        Seattle Resident
+
+    Position after the timecode identifies the fields, rather than a guess at
+    what a name looks like. Real supers include single-word names like "Kelly",
+    which any "looks like a person" heuristic gets wrong.
+
+    Lines before the first timecode are slates — the day and the location — and
+    are skipped. A name with no title after it is dropped: in real wire copy
+    that is a slate too, not a person.
     """
     lines = [line.strip() for line in _normalise(block).splitlines() if line.strip()]
 
     supers: list[Super] = []
-    pending_name: Optional[str] = None
-    pending_timecode = ""
-    last_timecode = ""
-    after_timecode = False
-
-    for line in lines:
-        if _is_timecode(line):
-            pending_name = None
-            last_timecode = line
-            after_timecode = True
+    index = 0
+    while index < len(lines):
+        if not _is_timecode(lines[index]):
+            index += 1
             continue
 
-        if pending_name is not None:
-            supers.append(
-                Super(name=pending_name, title=line, timecode=pending_timecode)
-            )
-            pending_name = None
-            after_timecode = False
+        timecode = lines[index]
+        index += 1
+        if index >= len(lines) or _is_timecode(lines[index]):
             continue
 
-        if after_timecode and _looks_like_a_name(line):
-            pending_name = line
-            pending_timecode = last_timecode
-            after_timecode = False
-            continue
+        name = lines[index]
+        index += 1
+        if index >= len(lines) or _is_timecode(lines[index]):
+            continue  # a name with no title is a slate
 
-        after_timecode = False
+        supers.append(Super(name=name, title=lines[index], timecode=timecode))
+        index += 1
 
     return supers
 

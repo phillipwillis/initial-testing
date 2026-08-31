@@ -43,6 +43,14 @@ class StoryStub:
     tags: list[str] = field(default_factory=list)
     related_ids: list[str] = field(default_factory=list)
 
+    # Video rows carry a different metadata line from wire articles, and it is
+    # richer: the wire tells us what form the material is in and how long it
+    # runs, which is most of what slotting needs (§2, §6 phase 2).
+    story_number: str = ""     # "WE-001MO" — what the producer types into Source
+    market: str = ""           # "Seattle-Tacoma, WA"
+    footage_type: str = ""     # VO/SIL, DONUT, PKG …
+    duration_seconds: Optional[float] = None
+
     @property
     def has_script(self) -> bool:
         return ContentType.SCRIPT in self.content_type
@@ -52,15 +60,20 @@ class StoryStub:
         return ContentType.VIDEO in self.content_type
 
     @property
+    def is_video_record(self) -> bool:
+        """True for the video schema, which carries a footage type."""
+        return bool(self.footage_type)
+
+    @property
     def is_update(self) -> bool:
         """A story the wire has already revised at least once."""
         return bool(self.version and self.version > 1)
 
 
-# "31 Aug 26 06:15 ET"  /  "31 AUG 26 06:15 ET"
+# "31 Aug 26 06:15 ET", and the date-only form some rows carry: "31 Aug 26".
 _TIMESTAMP_RE = re.compile(
-    r"^\s*(?P<day>\d{1,2})\s+(?P<month>[A-Za-z]{3})\s+(?P<year>\d{2,4})\s+"
-    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<zone>[A-Z]{2,4})?\s*$"
+    r"^\s*(?P<day>\d{1,2})\s+(?P<month>[A-Za-z]{3})\s+(?P<year>\d{2,4})"
+    r"(?:\s+(?P<hour>\d{1,2}):(?P<minute>\d{2}))?\s*(?P<zone>[A-Z]{2,4})?\s*$"
 )
 
 _MONTHS = {
@@ -90,7 +103,11 @@ def parse_timestamp(text: str) -> Optional[datetime]:
         year += 2000
     try:
         return datetime(
-            year, month, int(m.group("day")), int(m.group("hour")), int(m.group("minute"))
+            year,
+            month,
+            int(m.group("day")),
+            int(m.group("hour") or 0),
+            int(m.group("minute") or 0),
         )
     except ValueError:
         return None

@@ -22,6 +22,15 @@ VOID_ELEMENTS = {
     "link", "meta", "param", "source", "track", "wbr",
 }
 
+# Elements that end a line. CNN renders a wire script as a run of <p>, and the
+# script's meaning is carried by its line structure — the SUPERS block is
+# timecode, name, title on three lines — so flattening it to one line destroys
+# the thing the parser reads.
+BLOCK_ELEMENTS = {
+    "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
+    "section", "article", "blockquote", "pre", "td", "th",
+}
+
 
 @dataclass
 class Node:
@@ -58,6 +67,51 @@ class Node:
         return " ".join(" ".join(parts).split())
 
     # -- traversal ----------------------------------------------------------
+
+    @property
+    def block_text(self) -> str:
+        """Text with block-level boundaries kept as newlines.
+
+        `text` collapses everything to one line, which is right for a headline
+        and wrong for a script. CNN renders each line of wire copy as its own
+        `<p>`, so one paragraph is one line — not a paragraph break. A
+        deliberately empty paragraph does become a blank line, which is how the
+        SUPERS block separates its groups.
+        """
+        lines: list[str] = []
+        pending: list[str] = []
+
+        def flush() -> None:
+            if pending:
+                joined = " ".join(" ".join(pending).split())
+                pending.clear()
+                if joined:
+                    lines.append(joined)
+
+        def visit(node: "Node") -> None:
+            if node.tag == "#text":
+                pending.append(node._text)
+                return
+            if node.tag in BLOCK_ELEMENTS:
+                flush()
+                before = len(lines)
+                for child in node.children:
+                    visit(child)
+                flush()
+                if len(lines) == before:
+                    lines.append("")
+                return
+            for child in node.children:
+                visit(child)
+
+        visit(self)
+        flush()
+
+        collapsed: list[str] = []
+        for line in lines:
+            if line or (collapsed and collapsed[-1]):
+                collapsed.append(line)
+        return "\n".join(collapsed).strip()
 
     def walk(self) -> Iterator["Node"]:
         yield self

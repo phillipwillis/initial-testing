@@ -227,6 +227,46 @@ CNN_NEWSOURCE_PASSWORD
 
 Read at runtime, never logged, never written to disk.
 
+## There is more than one row schema
+
+The most important thing the captures settled. A **wire article** row reads:
+
+```
+31 Aug 26 07:29 ET | CNN | Version 11
+```
+
+A **video record** from an affiliate reads:
+
+```
+31 Aug 26 06:52 ET | WABC | NE-005MO | New York, NY | VO/SIL | 01:02
+```
+
+and a **graphic** reads simply:
+
+```
+31 Aug 26 | CNN Weather via CNN Newsource
+```
+
+Six fields, three fields, two fields — same `metadata` element, same caption spans, same
+dividers. Positional parsing puts a market in the source column the first time it meets the
+second shape, so fields are identified by what they contain: a timestamp is what parses as
+one, a Story Number matches `NE-005MO`, a duration matches `01:02`, a footage type is in a
+known set, and what is left over is source then market, in order.
+
+### The video schema is worth having
+
+It carries what slotting needs, before a story is ever opened:
+
+| Field | Example | Why it matters |
+|---|---|---|
+| Story Number | `WE-001MO` | The id. This is what a producer types into the rundown's Source column (`docs/inception.md`) |
+| Market | `Seattle-Tacoma, WA` | §7 `viewer_impact` — an Idaho Falls show weights local and regional hardest |
+| Footage type | `VO/SIL`, `DONUT`, `PKG` | Maps onto the §3 segment types. The wire is saying what the material can become |
+| Duration | `01:02` | The TRT, which §6 phase 2 needs to fill a hole |
+
+**The Story Number is confirmed**, not inferred: `WE-001MO` appears in the collapsed row's
+metadata line *and* as `Story Number:` in that story's expanded panel.
+
 ## What the capture settled
 
 **The story list is lazy-loaded, not paged.** The capture held exactly five
@@ -245,6 +285,7 @@ accumulates rather than walking pages.
 |---|---|---|
 | `Wire Article` | `DescriptionIcon` | Script exists |
 | `Image` | `ImageIcon` | Stills |
+| `Video` | `PlayArrowIcon` | Playable video |
 
 Match the label **exactly**. Searching `DescriptionIcon` for the substring `script` matches
 de-**script**-ionicon — the right answer for the wrong reason, and wrong as soon as CNN
@@ -288,19 +329,41 @@ so the saved source is an empty `<div id="root">`.
 Either way the file needs reading before it travels. `newscast.capture` scrubs emails, bearer
 tokens, JWTs, key-shaped JSON fields and long hex ids, but that is best effort.
 
+## The expanded panel
+
+Expanding a row renders the wire script inside `.article-preview` as a run of `<p>`, one per
+line of script. Every marker `cnn_script.py` knows was present and parsed:
+`--SUPERS--`, `--LEAD IN--`, `--REPORTER PKG-AS FOLLOWS--`, `--TAG--`,
+`-----END-----CNN.SCRIPT-----`, `--KEYWORD TAGS--`.
+
+Two things the real copy taught us that invented test data had not:
+
+1. **The panel has no `Footage Type:` line.** That field comes from the listing row, not the
+   script, so "is this a package" has to be answered by the presence of a reporter section.
+   The row's own footage type is the better answer where it exists.
+2. **The SUPERS block opens with slates.** The day and the location sit above the first
+   timecode, and real supers include single-word names:
+
+   ```
+   Saturday
+   Seattle
+
+   :05 - :07
+   Kelly
+   Seattle Resident
+   ```
+
+   `Kelly` is a super. Any "looks like a person" heuristic wanting two words drops it, so the
+   parser takes position after the timecode instead: timecode, name, title.
+
+Because the script is `<p>` per line, extracting it needs block-aware text. Collapsing the
+subtree to one line — the right thing for a headline — destroys the line structure every one
+of those markers depends on.
+
 ## Still unknown
 
-1. **Related stories.** §11.4 says these must be discovered by navigating. The collapsed
-   listing does not show them, so they are behind the expanded panel or the story page.
-2. **The expanded panel vs. a story page.** Which one `wire_expand()` should read. The
-   `article-preview`, `originally-published` and `byline` classes appear only when a row is
-   expanded, and the capture was taken collapsed — so a capture with one story open would
-   settle this.
-3. **The video icon's label.** No row in the capture carried video, so the aria-label for it
-   is a guess (`Video`, with `PlayArrowIcon` as the fallback signal). One capture including a
-   video row confirms it.
-4. **The Story Number**, which the search box takes and the previous implementation used. It
-   is not in the listing DOM; it is presumably in the expanded panel next to `Story Number:`.
-5. **Video and script download.** The header download icon, the per-row copy button, and how
+1. **Related stories.** §11.4 says these must be discovered by navigating. Neither the
+   collapsed listing nor the expanded panel showed them.
+2. **Video and script download.** The header download icon, the per-row copy button, and how
    §11.7's "download the video, transcribe, delete" actually gets the file.
-6. **Whether we may use the JSON API** instead of the DOM.
+3. **Whether we may use the JSON API** instead of the DOM.
