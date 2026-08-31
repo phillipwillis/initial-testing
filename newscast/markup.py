@@ -63,6 +63,11 @@ CAMERA_RE = re.compile(
 )
 ANCHOR_RE = re.compile(r"^[A-Z][A-Z .'\-]*(?:\s*[/&]\s*[A-Z][A-Z .'\-]*)*$")
 
+# Shots that are not a studio camera. The weather wall is one, and without this
+# it parses as an anchor named "WX GFX" — it matches the anchor pattern, and
+# nothing downstream notices because the rules exempt weather elements anyway.
+NON_CAMERA_SHOT_RE = re.compile(r"^(?P<shot>WX\s+GFX)(?:\s*-\s*(?P<d>D))?$", re.I)
+
 _ACCEPTED_RE = re.compile(r"\[(accepted|submitted)\]\s*$", re.I)
 
 _STORY_KINDS = {
@@ -126,6 +131,16 @@ def _parse_bracket(inner: str, line_no: int, raw: str) -> Element:
                 seconds=seconds or 0.0,
                 duration_text=duration_text,
             )
+
+    shot_match = NON_CAMERA_SHOT_RE.match(text)
+    if shot_match:
+        return CameraCue(
+            line_no=line_no,
+            raw=raw,
+            shot=" ".join(shot_match.group("shot").upper().split()),
+            monitor=None,
+            park_d=bool(shot_match.group("d")),
+        )
 
     if upper.startswith("CAM"):
         m = CAMERA_RE.match(text)

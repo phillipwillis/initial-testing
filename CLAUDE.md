@@ -624,8 +624,33 @@ rule engine checks and what a human reads in a diff — while what actually gets
 
 That is a good split rather than a problem: the validator stays the eval harness for
 everything downstream (§10), and the keystroke layer becomes a narrow, separately testable
-translation at the very end. It does mean `serialize_story()` is not what drives Inception,
-and a `plan_keystrokes(story)` function is still to be written.
+translation at the very end. `serialize_story()` is therefore not what drives Inception;
+`newscast/keystrokes.py` is.
+
+`plan_keystrokes(story)` returns a plan as **data**, not actions — nothing in it touches
+Selenium — so the sequence that will be typed into a live rundown can be asserted in a test
+and read in a diff before it is ever sent. What it encodes, from the previous implementation:
+
+| Markup | Keystrokes |
+|---|---|
+| `[CAM2 OX3]` | `[OX3` · pause · ENTER · BACKSPACE×2 (Inception appends `-D`) |
+| `[CAM3 OX2]` | `[OX2` · pause · ENTER (no `-D` on this one) |
+| `[CAM2 OX3 - D]` | as above, keeping the appended `-D` |
+| `[MEGAN]` | Option+2 |
+| `[JEFF]` | Option+5 |
+| `[CG: ...]` | Option+s |
+| `[VO]` | `[VO` · pause · ENTER |
+| `[PKG 1:25]` | `[PKG` · pause · ENTER · BACKSPACE×4 · DELETE×4 · type `1:25` |
+| `[ON CAM]` | re-issue the shot shortcut — it is not a newline |
+| `[#####]` | Option+Cmd+H |
+
+Soundbites and reporter tracks are typed in **green** (the SOT toggle), because the anchor
+does not read them and they must not scroll on the prompter. Inserting a CG drops out of
+green, so a CG inside a package re-enables it.
+
+The two auto-inserted artefacts — the appended `-D` and the placeholder `0:00` — are
+`Correction` steps carrying what they expect to remove, so an adapter can verify rather than
+fire blind BACKSPACE runs (§13.5 and `docs/inception.md`, "What not to carry forward").
 
 ---
 
