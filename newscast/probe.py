@@ -111,7 +111,19 @@ def probe_api(driver, out: str, **options) -> dict[str, Any]:
 
     Read from the browser's own Performance timeline rather than a proxy, so
     there is nothing to install and nothing to intercept.
+
+    The timeline belongs to the current document and is cleared by navigation,
+    so this reloads the landing page itself and waits for the list to render
+    before collecting. Reading it straight after a login navigation catches the
+    login call and almost nothing else.
     """
+    driver.execute_script(
+        "try { performance.setResourceTimingBufferSize(1000); } catch (e) {}"
+    )
+    driver.get(LANDING_URL)
+    rows = wait_for_rows(driver)
+    time.sleep(3)
+
     entries = driver.execute_script(
         """
         return performance.getEntriesByType('resource')
@@ -128,8 +140,32 @@ def probe_api(driver, out: str, **options) -> dict[str, Any]:
 
     # Strip query strings: they carry session and search state.
     paths = sorted({e["url"].split("?")[0] for e in entries})
-    _write(out, "api-calls.json", json.dumps({"hosts": hosts, "paths": paths}, indent=2))
-    return {"xhr_count": len(entries), "hosts": hosts, "distinct_paths": len(paths)}
+
+    # Query strings carry session and search state, so only the shapes are kept.
+    params = driver.execute_script(
+        """
+        const keys = new Set();
+        for (const e of performance.getEntriesByType('resource')) {
+          if (e.initiatorType !== 'xmlhttprequest' && e.initiatorType !== 'fetch') continue;
+          try { for (const k of new URL(e.name).searchParams.keys()) keys.add(k); } catch (err) {}
+        }
+        return Array.from(keys).sort();
+        """
+    ) or []
+
+    _write(
+        out,
+        "api-calls.json",
+        json.dumps({"hosts": hosts, "paths": paths, "query_keys": params}, indent=2),
+    )
+    return {
+        "rows_rendered": rows,
+        "xhr_count": len(entries),
+        "hosts": hosts,
+        "distinct_paths": len(paths),
+        "query_keys": params,
+        "content_api_paths": [p for p in paths if "content" in p or "stories" in p or "search" in p],
+    }
 
 
 def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[str, Any]:
@@ -138,23 +174,60 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
     §6 wants a day's stories. There is no date filter, so the question is how
     much scrolling a day costs.
     """
+    if not wait_for_rows(driver):
+        return {"error": "the list never rendered"}
+
+    # The list scrolls inside its own container, not the window. Scrolling the
+    # window does nothing at all, which looks exactly like a list that has
+    # stopped loading.
+    scroller = driver.execute_script(
+        """
+        const row = document.querySelector('.storyLineItemWrapperBox');
+        if (!row) return null;
+        let node = row.parentElement;
+        while (node && node !== document.body) {
+          const style = getComputedStyle(node);
+          const scrolls = /auto|scroll/.test(style.overflowY);
+          if (scrolls && node.scrollHeight > node.clientHeight + 10) {
+            window.__newscastScroller = node;
+            return {tag: node.tagName.toLowerCase(), cls: (node.className || '').slice(0, 90),
+                    scrollHeight: node.scrollHeight, clientHeight: node.clientHeight};
+          }
+          node = node.parentElement;
+        }
+        window.__newscastScroller = null;
+        return null;
+        """
+    )
+
     counts: list[int] = []
     for index in range(scroll_passes):
-        html = driver.page_source
-        counts.append(len(parse_listing(html)))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1.2)
-        if index and counts[-1] == counts[-2]:
-            time.sleep(1.5)  # one more beat before believing it has stopped
+        counts.append(len(parse_listing(driver.page_source)))
+        driver.execute_script(
+            """
+            const el = window.__newscastScroller;
+            if (el) { el.scrollTop = el.scrollHeight; }
+            else { window.scrollTo(0, document.body.scrollHeight); }
+            """
+        )
+        time.sleep(1.5)
+        if index >= 2 and counts[-1] == counts[-2] == counts[-3]:
+            time.sleep(2.0)
+            if len(parse_listing(driver.page_source)) == counts[-1]:
+                break
 
     stubs = parse_listing(driver.page_source)
-    stamped = [s for s in stubs if s.timestamp]
-    oldest = min((s.timestamp for s in stamped), default=None)
-    newest = max((s.timestamp for s in stamped), default=None)
+    # Rows with no clock time (graphics: "31 Aug 26") sit at midnight and would
+    # report a false 14-hour span.
+    timed = [s for s in stubs if s.timestamp and s.timestamp_text.count(":")]
+    oldest = min((s.timestamp for s in timed), default=None)
+    newest = max((s.timestamp for s in timed), default=None)
 
     return {
+        "scroll_container": scroller,
         "rows_after_each_scroll": counts,
         "rows_final": len(stubs),
+        "rows_with_a_clock_time": len(timed),
         "newest": newest.isoformat() if newest else None,
         "oldest": oldest.isoformat() if oldest else None,
         "span_minutes": round((newest - oldest).total_seconds() / 60) if oldest and newest else None,
@@ -163,32 +236,75 @@ def probe_scroll(driver, out: str, scroll_passes: int = 12, **options) -> dict[s
     }
 
 
-def _expand_first(driver, want_video: bool) -> Optional[int]:
-    """Expand the first row, optionally the first that carries video."""
+# The row's expand control. Its own label answers a question the notes had
+# listed as unknown: expanding a row is how related content surfaces.
+EXPAND_SELECTORS = (
+    'button[title="Show related content"]',
+    'button[aria-label="Show related content"]',
+    'button[title^="Show"]',
+    '[data-testid="ExpandMoreIcon"]',
+    '[data-testid="KeyboardArrowDownIcon"]',
+)
+
+
+def wait_for_rows(driver, timeout: float = 30.0) -> int:
+    """Wait until the list has rendered.
+
+    The app fetches its content after the document loads, so probing straight
+    away reads an empty page and concludes there is nothing there.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        count = driver.execute_script(
+            "return document.querySelectorAll('.storyLineItemWrapperBox').length;"
+        )
+        if count:
+            return count
+        time.sleep(0.5)
+    return 0
+
+
+def _expand_first(driver, want_video: bool) -> dict[str, Any]:
+    """Expand the first row, optionally the first carrying video.
+
+    Returns which selector worked, so a failure says what was actually tried
+    rather than just "not found".
+    """
     return driver.execute_script(
         """
         const wantVideo = arguments[0];
+        const selectors = arguments[1];
         const rows = Array.from(document.querySelectorAll('.storyLineItemWrapperBox'));
+        const tried = [];
         for (let i = 0; i < rows.length; i++) {
           const row = rows[i];
-          const hasVideo = !!row.querySelector('[aria-label="Video"]');
-          if (wantVideo && !hasVideo) continue;
-          const toggle = row.querySelector('[data-testid="KeyboardArrowDownIcon"]');
-          const button = toggle ? toggle.closest('button') : null;
-          if (button) { button.click(); return i; }
+          if (wantVideo && !row.querySelector('[aria-label="Video"]')) continue;
+          for (const sel of selectors) {
+            const hit = row.querySelector(sel);
+            const button = hit ? (hit.closest('button') || hit) : null;
+            if (button) {
+              button.scrollIntoView({block: 'center'});
+              button.click();
+              return {index: i, selector: sel, rows: rows.length};
+            }
+            tried.push(sel);
+          }
         }
-        return null;
+        return {index: null, tried: Array.from(new Set(tried)), rows: rows.length,
+                videoRows: rows.filter(r => r.querySelector('[aria-label="Video"]')).length};
         """,
         want_video,
+        list(EXPAND_SELECTORS),
     )
 
 
 def probe_expand(driver, out: str, **options) -> dict[str, Any]:
     """What an expanded story holds: Story Number, TRT, related stories."""
-    index = _expand_first(driver, want_video=False)
-    if index is None:
-        return {"error": "no expandable row found"}
-    time.sleep(2.5)
+    wait_for_rows(driver)
+    opened = _expand_first(driver, want_video=False)
+    if opened.get("index") is None:
+        return {"error": "no expandable row found", "attempt": opened}
+    time.sleep(3.0)
 
     html = driver.page_source
     _write(out, "expanded-story.html", scrub_html(html)[0])
@@ -219,7 +335,7 @@ def probe_expand(driver, out: str, **options) -> dict[str, Any]:
     ) or []
 
     return {
-        "expanded_row_index": index,
+        "expanded_row": opened,
         "detail_labels": labels,
         "related_hits": related,
         "script_chars": len(text),
@@ -238,11 +354,13 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
     story — what the listing prints, what the media element reports, and what
     the script reads at — and see which agree.
     """
-    index = _expand_first(driver, want_video=True)
-    if index is None:
-        return {"error": "no video row found to expand"}
-    time.sleep(3.5)
+    wait_for_rows(driver)
+    opened = _expand_first(driver, want_video=True)
+    if opened.get("index") is None:
+        return {"error": "no video row found to expand", "attempt": opened}
+    time.sleep(4.0)
 
+    index = opened["index"]
     stubs = parse_listing(driver.page_source)
     stub = stubs[index] if index < len(stubs) else None
 
@@ -269,6 +387,7 @@ def probe_duration(driver, out: str, **options) -> dict[str, Any]:
         read_seconds = estimate_read_time(spoken)
 
     return {
+        "expanded_row": opened,
         "story_number": stub.story_number if stub else None,
         "footage_type": stub.footage_type if stub else None,
         "listing_duration_seconds": stub.wire_duration_seconds if stub else None,
@@ -316,12 +435,14 @@ def _write(out: str, name: str, content: str) -> str:
     return path
 
 
+# Order matters. `api` reloads the page to collect a clean timeline, so it runs
+# last, where it cannot disturb the probes that need an expanded row.
 PROBES: tuple[tuple[str, str, Callable], ...] = (
-    ("api", "does the front end call a JSON API", probe_api),
     ("scroll", "how rows accumulate and how far back they reach", probe_scroll),
     ("expand", "what an expanded story holds", probe_expand),
     ("duration", "what the printed duration corresponds to", probe_duration),
     ("download", "how material gets out", probe_download),
+    ("api", "does the front end call a JSON API", probe_api),
 )
 
 

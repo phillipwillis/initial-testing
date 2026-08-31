@@ -382,10 +382,58 @@ Because the script is `<p>` per line, extracting it needs block-aware text. Coll
 subtree to one line — the right thing for a headline — destroys the line structure every one
 of those markers depends on.
 
+## Related content is the expand chevron
+
+Answered by the control's own name. The chevron at the right of each row is:
+
+```html
+<button title="Show related content" aria-label="Show related content">
+  <svg data-testid="ExpandMoreIcon">
+```
+
+So expanding a row is not just "show me the script" — it is CNN's related-content mechanism,
+which is what §11.4 said would have to be discovered by navigating. The story script and the
+related items are behind the same click.
+
+Worth noting for the parser: the icon is `ExpandMoreIcon`, not `KeyboardArrowDownIcon`. Both
+exist on the page — the arrow icons belong to the Live Channels rail — and picking the wrong
+one finds nothing while looking like a page with no expandable rows.
+
+## What the first probe run settled
+
+- **The list scrolls in its own container, not the window.** A run that scrolled
+  `window.scrollTo(0, document.body.scrollHeight)` twelve times stayed at five rows
+  throughout. Scrolling the window on this page does nothing at all, and the result is
+  indistinguishable from a list that has stopped loading. The scroller is found at runtime by
+  walking up from a row to the first ancestor that actually overflows.
+- **The app fetches its content after the document loads.** The first two scroll passes saw
+  zero rows because the probe started before the list rendered.
+- **The performance timeline is per document.** Reading it straight after the login
+  navigation caught the login call and two analytics beacons, and nothing else — the content
+  fetches had happened on the document that navigation replaced.
+- **A date-only row sits at midnight**, so a naive newest-minus-oldest reported a 14-hour
+  span across five rows. Span is now measured over rows that carry a clock time.
+
+Confirmed API hosts so far:
+
+| Host | Path |
+|---|---|
+| `newsource-auth-api-530.ns.cnn.com` | `/api/portal/login` |
+| `mab.chartbeat.com` | analytics |
+| `ps13.pubnub.com` | `/time/0` — realtime transport, probably the live channel state |
+
+`/api/portal/login` confirms the front end talks to a REST API. Whether a content API is
+reachable, and whether affiliates may call it, is the question to put to the CNN rep.
+
+## Download controls
+
+Five buttons on the landing page: three `Download`, two `Copy`, all `<button>` with no
+`href`, so the transfer is script-driven rather than a link. Nothing has been clicked — a
+download on a licensed account has consequences a probe has no business causing.
+
 ## Still unknown
 
-1. **Related stories.** §11.4 says these must be discovered by navigating. Neither the
-   collapsed listing nor the expanded panel showed them.
+1. **What is inside "related content"** once a row is expanded.
 2. **Video and script download.** The header download icon, the per-row copy button, and how
    §11.7's "download the video, transcribe, delete" actually gets the file.
 3. **Whether we may use the JSON API** instead of the DOM.
