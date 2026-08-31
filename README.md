@@ -56,10 +56,35 @@ ceiling — report `INFO ... not configured` rather than enforcing an invented t
 
 ## On the work machine
 
+The code and the credentials do not live in the same directory. Unzip the repo *inside* the
+folder holding the `.env`:
+
+```
+monkey_king/
+    .env                                  CNN_USER, CNN_PASS
+    initial-testing-<branch>/             <- run commands from here
+        newscast/
+        probe-output/  → written to monkey_king/, not here
+```
+
+`python3 -m newscast...` only works from inside the unzipped folder, so that is where you run
+it. The `.env` is found by walking up from the working directory, so it does not matter what
+the unzipped folder is called or how deep it sits. Evidence is written beside the `.env`
+rather than into the unzipped folder, which gets replaced every time a new build is
+downloaded.
+
+```bash
+cd ~/Desktop/monkey_king/initial-testing-<branch>
+python3 -m newscast.capture launch --url https://newsource.ns.cnn.com/
+python3 -m newscast.probe
+```
+
+
 ```bash
 python3 -m newscast.capture launch                        # start Chrome with a debugging port
 python3 -m newscast.capture doctor                        # what can this machine actually do?
 python3 -m newscast.capture page --out cnn.html --tab newsource
+python3 -m newscast.probe                                 # answer the open questions
 ```
 
 `launch` starts Chrome detached on a separate profile and hands the terminal back. Log into

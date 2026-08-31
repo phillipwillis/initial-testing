@@ -1,11 +1,13 @@
 """Answer the open questions about CNN Newsource, on the machine that can see it.
 
-    cd ~/Desktop/monkey_king
+    cd ~/Desktop/monkey_king/initial-testing-<branch>
     python3 -m newscast.probe
 
-Reads CNN_USER and CNN_PASS from a .env in the working directory, logs in, and
-runs a series of read-only investigations. Writes evidence to ./probe-output/
-and prints a summary.
+Reads CNN_USER and CNN_PASS from the nearest .env — found by walking up from the
+working directory, because the repo is unzipped inside the folder that holds the
+credentials — logs in, and runs a series of read-only investigations. Evidence is
+written beside the .env rather than into the unzipped folder, which gets replaced
+on every download.
 
 What it is trying to settle (docs/wires/cnn-newsource.md, "Still unknown"):
 
@@ -354,7 +356,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="newscast.probe", description=__doc__.splitlines()[0])
     parser.add_argument("--env-file", help="path to the .env (default: ./.env)")
     parser.add_argument("--port", type=int, default=DEFAULT_DEBUG_PORT)
-    parser.add_argument("--out", default="probe-output")
+    parser.add_argument(
+        "--out",
+        help="where to write evidence (default: beside the .env, so it survives "
+        "replacing the unzipped folder)",
+    )
     parser.add_argument("--only", nargs="+", metavar="NAME",
                         help=f"run only these: {', '.join(n for n, _, _ in PROBES)}")
     parser.add_argument("--scroll-passes", type=int, default=12)
@@ -362,6 +368,15 @@ def main(argv: list[str] | None = None) -> int:
 
     values, env_path = load_env(args.env_file)
     log("env", f"read {env_path}" if env_path else "no .env found; using the environment")
+
+    # Default the output beside the .env rather than into the unzipped folder,
+    # which gets replaced every time a new build is downloaded.
+    out_dir = args.out or (
+        os.path.join(os.path.dirname(env_path), "probe-output")
+        if env_path
+        else "probe-output"
+    )
+    log("out", os.path.abspath(out_dir))
     print(describe(values, REQUIRED_KEYS))
     missing = require(values, *REQUIRED_KEYS)
     if missing:
@@ -383,11 +398,11 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(3)
 
     # The browser is the producer's and stays open; this attaches, it does not own it.
-    findings = run(driver, args.out, args.only, scroll_passes=args.scroll_passes)
+    findings = run(driver, out_dir, args.only, scroll_passes=args.scroll_passes)
 
-    path = write_report(findings, args.out)
+    path = write_report(findings, out_dir)
     print(f"\nwrote {path}")
-    print(f"      {os.path.abspath(args.out)}/")
+    print(f"      {os.path.abspath(out_dir)}/")
     print("\nRead the output before sending it on — it is scrubbed, best effort.\n")
     return 0
 

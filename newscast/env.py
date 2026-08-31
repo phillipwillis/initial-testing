@@ -13,23 +13,43 @@ from typing import Iterable, Optional
 DEFAULT_NAMES = (".env", "env", ".env.local")
 
 
-def candidate_paths(explicit: Optional[str] = None) -> list[str]:
-    """Where to look for a .env, in order.
+def candidate_paths(explicit: Optional[str] = None, start: Optional[str] = None) -> list[str]:
+    """Where to look for a .env, nearest first.
 
-    The working directory first: the tools are run from the directory that
-    holds the credentials.
+    The code and the credentials do not live in the same directory. The
+    repository is unzipped *inside* the folder holding the .env:
+
+        monkey_king/
+            .env
+            initial-testing-<branch>/
+                newscast/
+
+    and `python3 -m newscast...` only works from inside the unzipped folder,
+    which is one level below the .env. So the search walks up from the working
+    directory to the home directory, which finds it wherever in that nesting
+    the command is run from, whatever the unzipped folder is called.
     """
     if explicit:
         return [explicit]
-    here = os.getcwd()
-    home = os.path.expanduser("~")
-    roots = [
-        here,
-        os.path.join(home, "Desktop", "monkey_king"),
-        os.path.join(home, "monkey_king"),
-        home,
-    ]
-    return [os.path.join(root, name) for root in roots for name in DEFAULT_NAMES]
+
+    paths: list[str] = []
+    here = os.path.abspath(start or os.getcwd())
+    home = os.path.abspath(os.path.expanduser("~"))
+
+    walked = here
+    while True:
+        paths.extend(os.path.join(walked, name) for name in DEFAULT_NAMES)
+        parent = os.path.dirname(walked)
+        if parent == walked or walked == home:
+            break
+        walked = parent
+
+    # Then the conventional spot, in case the command is run from elsewhere.
+    for root in (os.path.join(home, "Desktop", "monkey_king"), os.path.join(home, "monkey_king"), home):
+        paths.extend(os.path.join(root, name) for name in DEFAULT_NAMES)
+
+    seen: set[str] = set()
+    return [p for p in paths if not (p in seen or seen.add(p))]
 
 
 def parse_env(text: str) -> dict[str, str]:

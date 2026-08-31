@@ -33,8 +33,49 @@ class ParseTests(unittest.TestCase):
 
 class LoadTests(unittest.TestCase):
     def test_the_working_directory_is_searched_first(self):
-        """The tools are run from the directory holding the credentials."""
         self.assertEqual(candidate_paths()[0], os.path.join(os.getcwd(), ".env"))
+
+    def test_the_search_walks_up_out_of_the_unzipped_folder(self):
+        """The code and the credentials are not in the same directory.
+
+            monkey_king/
+                .env
+                initial-testing-<branch>/     <- commands run from here
+
+        `python3 -m newscast...` only works from inside the unzipped folder,
+        which is one level below the .env.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            monkey = os.path.join(tmp, "monkey_king")
+            unzipped = os.path.join(monkey, "initial-testing-some-branch")
+            os.makedirs(unzipped)
+            env_path = os.path.join(monkey, ".env")
+            with open(env_path, "w") as handle:
+                handle.write("CNN_USER=phil\n")
+
+            paths = candidate_paths(start=unzipped)
+            self.assertIn(env_path, paths)
+            self.assertLess(
+                paths.index(env_path),
+                paths.index(os.path.join(os.path.expanduser("~"), ".env")),
+                "the nearest .env should win over the home directory",
+            )
+
+    def test_the_nearest_env_wins_over_one_further_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inner = os.path.join(tmp, "a", "b")
+            os.makedirs(inner)
+            paths = candidate_paths(start=inner)
+            self.assertLess(
+                paths.index(os.path.join(inner, ".env")),
+                paths.index(os.path.join(tmp, "a", ".env")),
+            )
+
+    def test_the_search_terminates(self):
+        """Walking up must stop, at the home directory or the filesystem root."""
+        paths = candidate_paths(start="/")
+        self.assertLess(len(paths), 200)
+        self.assertEqual(len(paths), len(set(paths)), "no duplicates")
 
     def test_an_explicit_path_wins(self):
         self.assertEqual(candidate_paths("/tmp/x.env"), ["/tmp/x.env"])
