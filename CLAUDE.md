@@ -593,3 +593,36 @@ stories that both park the monitor in D — which is why two packages back to ba
 5. **A double read is checked at block level for C and D.** §11.2 says both anchors are
    involved in reading the stories; the engine requires both to appear in the block but does
    not require every individual story to be a double read.
+
+---
+
+## 14. Runtime constraints
+
+**The deliverable is a Python program, run from a terminal. Not an application.** That is the
+only thing that runs on the work machine, so it is a hard constraint on every design decision
+below the line, not a preference.
+
+What follows from it:
+
+- **Standard library first.** Milestone 1 has no dependencies at all and should stay that way.
+  Every dependency added past this point needs a reason and a plan for how it gets onto a
+  locked-down machine.
+- **Selenium over Playwright** for browser work. Not just because §11.4 says so — Selenium
+  drives the Chrome that is already installed and approved, while Playwright downloads and
+  manages its own browser binaries, which is exactly the kind of thing a work machine blocks.
+- **Prefer attaching to a running browser over launching one.** Chrome started with a remote
+  debugging port, logged in by hand, with the collector attaching to that session: no
+  credential handling, no driver launching a suspicious second browser, and the human is at
+  the desk anyway before a noon show. See `docs/wires/cnn-newsource.md`.
+- **No background service, no installer, no packaging.** If it cannot be run as
+  `python3 -m something` from a checkout, it does not fit.
+
+### Still to confirm
+
+- Is `pip install` available on the work machine, and does it have network access to PyPI?
+  If not, dependencies have to be vendored into the repo, which rules out anything large.
+- Which Python version is on the machine. The code currently assumes 3.10+ for the
+  `X | Y` type syntax; that is trivial to walk back if needed.
+- How chromedriver gets onto the machine. Recent Selenium fetches it automatically, which is
+  a download, which may be blocked.
+- Whether this is run by hand each morning or scheduled.

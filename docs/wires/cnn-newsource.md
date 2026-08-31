@@ -85,7 +85,60 @@ Three of these matter more than the rest, because they map onto our segment type
 the index, so **the date filter is doing most of the work** and we have not identified it yet.
 The header calendar icon and the calendar/sort toggle above the list are the candidates.
 
-## DOM structure
+## DOM structure — a list row
+
+From the Elements panel, inspecting the metadata line of a row:
+
+```html
+<span class="MuiTypography-root MuiTypography-caption MuiTypography-noWrap title css-1levgce"
+      title="Tropical Storm Edouard or a depression could soon form in the Gulf">
+  Tropical Storm Edouard or a depression could soon form in the Gulf
+</span>
+
+<p class="MuiTypography-root MuiTypography-body1 MuiTypography-noWrap metadata css-yzz7bx">
+  <span class="MuiTypography-root MuiTypography-caption css-1d6aoja">31 Aug 26 06:15 ET</span>
+  <span class="MuiTypography-root MuiTypography-body1 metadataDivider css-ypy096">|</span>
+  <span class="MuiTypography-root MuiTypography-caption css-1d6aoja" title="CNN">CNN</span>
+  <span class="MuiTypography-root MuiTypography-body1 metadataDivider css-ypy096">|</span>
+  <span class="MuiTypography-root MuiTypography-caption css-1d6aoja" title="1">Version 1</span>
+</p>
+
+<span class="MuiTypography-root MuiTypography-subBody description css-1wqzo7f">
+  A new potential tropical system is putting Texas and Louisiana on alert.
+</span>
+```
+
+Two things make this much more tractable than the outer layout did.
+
+**Hand-written class names sit alongside the generated ones.** Every element carries MUI
+classes and a `css-*` hash, but also exactly one meaningful name the app's authors chose:
+`title`, `metadata`, `metadataDivider`, `description`, and from the expanded panel
+`article-preview`, `originally-published`, `byline`, plus `graphicContainer` and
+`metadataContainer`. Those are the selectors.
+
+**The `title` attributes carry clean values while the text is decorated.** The source span is
+`title="CNN"`, and the version span is `title="1"` where the text reads "Version 1". Parse the
+attribute, not the text — no stripping a "Version " prefix that might get relabelled. The
+headline's `title` attribute also holds the full string where the visible text may be
+truncated by `MuiTypography-noWrap`.
+
+So a row parses as:
+
+| Stub field | Selector | Read from |
+|---|---|---|
+| `slug` | `span.title` | `title` attribute |
+| `timestamp` | `p.metadata > span.MuiTypography-caption` (1st) | text |
+| `source` | `p.metadata > span.MuiTypography-caption` (2nd) | `title` attribute |
+| version | `p.metadata > span.MuiTypography-caption` (3rd) | `title` attribute |
+| teaser | `span.description` | text |
+| `content_type` | the `Media :` icons | not yet inspected |
+
+Skip `.metadataDivider` spans — they are the `|` separators. Better still, take the caption
+spans that carry a `title` attribute and treat position as a fallback, in case a field is
+absent on some rows (the CNN Wire row showed a different thumbnail treatment, so rows are not
+all identical).
+
+## DOM structure — an expanded story
 
 From the Elements panel on an expanded story:
 
@@ -152,14 +205,28 @@ fine — the UI does not obviously announce the expiry. A long-running collector
 
 ## Access
 
-Credentials never enter this repo, this transcript, or any code. The adapter reads them from
-the environment at runtime:
+Credentials never enter this repo, this transcript, or any code.
+
+**Preferred: attach to a Chrome that is already logged in.** Start Chrome once with a remote
+debugging port, log in by hand, and have Selenium attach to that running browser rather than
+launch its own. The collector then inherits a live session and never handles a password at
+all — no credential in the environment, no credential in a vault, nothing to leak. It also
+uses the Chrome that is already installed and approved on the work machine (see CLAUDE.md
+§14), and it matches how a producer actually works: the browser is open anyway.
+
+The cost is that somebody logs in each morning. For a noon show where a human is at the desk
+from ten, that is close to free, and it sidesteps the whole "how do we get credentials to the
+agent" problem.
+
+**Fallback: environment variables**, if the collector ever has to log in unattended:
 
 ```
 CNN_NEWSOURCE_URL       https://newsource.ns.cnn.com/
 CNN_NEWSOURCE_USERNAME
 CNN_NEWSOURCE_PASSWORD
 ```
+
+Read at runtime, never logged, never written to disk.
 
 ## Still unknown
 
