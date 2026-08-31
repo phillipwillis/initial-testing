@@ -234,7 +234,7 @@ The fixture the parser is tested against was reconstructed from screenshots, so 
 parsing logic without proving the markup. Replacing it takes one of:
 
 ```bash
-python3 -m newscast.capture page --out cnn-landing.html
+python3 -m newscast.capture page --out cnn-landing.html --tab newsource
 ```
 
 or, with no code at all: DevTools → Elements → right-click `<html>` → Copy → Copy outerHTML,

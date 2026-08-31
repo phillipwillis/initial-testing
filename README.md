@@ -61,7 +61,10 @@ python3 -m newscast.capture doctor            # what can this machine actually d
 python3 -m newscast.capture page --out cnn.html   # save the rendered DOM of the current tab
 ```
 
-`doctor` reports Python, Selenium, Chrome and whether a debugging port is open. `page`
+`doctor` reports Python, Selenium, Chrome and whether Chrome — specifically Chrome — is on
+the debugging port. The default port is 9333 rather than the conventional 9222, because
+Adobe's UXP tooling binds 9222 on any machine with Premiere or Photoshop installed; Chrome
+then starts with no debugging port and does not mention it. `page`
 attaches to a Chrome you have already logged into and saves what is on screen — it never logs
 in and never takes a password. Saved HTML is scrubbed for emails, tokens and session ids
 first; read it before sending it anywhere.

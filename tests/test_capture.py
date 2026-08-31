@@ -4,9 +4,82 @@ The Selenium parts cannot be tested here; the scrubber can, and it is the part
 that matters, because it decides what leaves the work machine.
 """
 
+import json
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from newscast.capture import launch_hint, scrub_html
+from newscast.capture import browser_on_port, launch_hint, probe_debug_port, scrub_html
+
+
+class _FakeDevTools(BaseHTTPRequestHandler):
+    payload: dict = {}
+
+    def do_GET(self):
+        body = json.dumps(self.payload).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+class _Endpoint:
+    """A throwaway DevTools-ish endpoint on an ephemeral port."""
+
+    def __init__(self, payload):
+        handler = type("H", (_FakeDevTools,), {"payload": payload})
+        self.server = HTTPServer(("127.0.0.1", 0), handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class DebugPortIdentityTests(unittest.TestCase):
+    """An open port is not proof that Chrome is behind it.
+
+    Adobe's UXP tooling speaks the DevTools protocol on 9222, accepts the
+    connection, and only fails once the driver tries to use it — with
+    "unrecognized Chrome version: Adobe UXP".
+    """
+
+    def test_chrome_is_recognised(self):
+        with _Endpoint({"Browser": "Chrome/131.0.6778.86"}) as endpoint:
+            browser, is_chrome = browser_on_port(endpoint.port)
+        self.assertEqual(browser, "Chrome/131.0.6778.86")
+        self.assertTrue(is_chrome)
+
+    def test_chromium_is_recognised(self):
+        with _Endpoint({"Browser": "Chromium/120.0.0.0"}) as endpoint:
+            self.assertTrue(browser_on_port(endpoint.port)[1])
+
+    def test_adobe_uxp_is_rejected_by_name(self):
+        with _Endpoint({"Browser": "Adobe UXP"}) as endpoint:
+            browser, is_chrome = browser_on_port(endpoint.port)
+        self.assertEqual(browser, "Adobe UXP")
+        self.assertFalse(is_chrome)
+
+    def test_an_endpoint_that_names_no_browser_is_not_chrome(self):
+        with _Endpoint({"Protocol-Version": "1.3"}) as endpoint:
+            browser, is_chrome = browser_on_port(endpoint.port)
+        self.assertEqual(browser, "unidentified")
+        self.assertFalse(is_chrome)
+
+    def test_a_closed_port_answers_nothing_rather_than_raising(self):
+        with _Endpoint({"Browser": "Chrome/1"}) as endpoint:
+            closed = endpoint.port
+        self.assertIsNone(probe_debug_port(closed, timeout=0.4))
+        self.assertEqual(browser_on_port(closed), (None, False))
 
 
 class ScrubTests(unittest.TestCase):

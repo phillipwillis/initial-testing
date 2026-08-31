@@ -22,14 +22,21 @@ credentials never leave the machine.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
 import socket
 import sys
+import urllib.error
+import urllib.request
 from typing import Optional
 
-DEFAULT_DEBUG_PORT = 9222
+# Not 9222. That is the conventional Chrome debugging port, which is exactly why
+# it is contested: Adobe's UXP tooling binds it for plugin debugging, and on a
+# machine with Premiere or Photoshop installed it usually wins the race. Chrome
+# then starts with no debugging port at all and says nothing about it.
+DEFAULT_DEBUG_PORT = 9333
 
 CHROME_PATHS = {
     "Darwin": [
@@ -83,6 +90,38 @@ def port_is_open(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bo
         return sock.connect_ex((host, port)) == 0
 
 
+def probe_debug_port(port: int, timeout: float = 2.0) -> Optional[dict]:
+    """Ask whatever is on the port to identify itself.
+
+    Any DevTools-protocol endpoint answers /json/version with a `Browser`
+    string. An open port is not enough to know Chrome is behind it — Adobe UXP
+    speaks the same protocol on 9222 and will happily accept the connection,
+    then fail with "unrecognized Chrome version" once the driver tries to use
+    it. Returns None if nothing answers.
+    """
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/json/version", timeout=timeout
+        ) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def browser_on_port(port: int) -> tuple[Optional[str], bool]:
+    """Return (browser identity, is it Chrome).
+
+    The identity string looks like "Chrome/131.0.6778.86", or "Adobe UXP" when
+    something else got to the port first.
+    """
+    info = probe_debug_port(port)
+    if not info:
+        return None, False
+    browser = info.get("Browser") or info.get("browser") or ""
+    is_chrome = bool(re.match(r"(?i)(chrome|chromium|headlesschrome)/", browser))
+    return browser or "unidentified", is_chrome
+
+
 def find_chrome() -> Optional[str]:
     for path in CHROME_PATHS.get(platform.system(), []):
         if os.path.exists(path):
@@ -131,12 +170,30 @@ def doctor(port: int = DEFAULT_DEBUG_PORT) -> int:
     else:
         _info("chrome not found in the usual places", "it may still be installed")
 
-    if port_is_open(port):
-        _ok(f"chrome is listening on port {port}", "attach mode is available")
-    else:
+    if not port_is_open(port):
         _no(f"nothing listening on port {port}", "start Chrome with a debugging port:")
         print(f"\n{launch_hint(port)}\n")
         print("    Then log into the wire as normal and re-run this check.")
+    else:
+        browser, is_chrome = browser_on_port(port)
+        if is_chrome:
+            _ok(f"chrome is listening on port {port}", browser)
+            _info("attach mode is available")
+        elif browser:
+            _no(f"port {port} is taken by something else", browser)
+            print(
+                f"\n    Something that is not Chrome answered on {port}."
+                "\n    Adobe's UXP tooling does this on 9222 if Premiere or Photoshop"
+                "\n    is installed, and Chrome then starts with no debugging port at"
+                "\n    all without complaining. Pick a free port instead:\n"
+            )
+            print(f"{launch_hint(port + 1)}\n")
+            print(f"    …then: python3 -m newscast.capture page --port {port + 1}")
+        else:
+            _no(
+                f"port {port} is open but does not speak the DevTools protocol",
+                "something unrelated is using it; try another port",
+            )
 
     print("\nDone. Send this output back and it answers what this machine can do.\n")
     return 0
@@ -161,13 +218,53 @@ def attach(port: int = DEFAULT_DEBUG_PORT):
             "Then log in as normal and run this again."
         )
 
+    browser, is_chrome = browser_on_port(port)
+    if not is_chrome:
+        raise SystemExit(
+            f"Port {port} is not Chrome — it answered as {browser or 'something unidentified'}.\n\n"
+            "Adobe's UXP tooling binds 9222 for plugin debugging, and Chrome then\n"
+            "starts without a debugging port and does not say so.\n\n"
+            f"Start Chrome on a free port:\n\n{launch_hint(port + 1)}\n\n"
+            f"…then re-run with --port {port + 1}."
+        )
+
     options = webdriver.ChromeOptions()
     options.add_experimental_option("debuggerAddress", f"127.0.0.1:{port}")
     return webdriver.Chrome(options=options)
 
 
-def capture_page(out_path: str, port: int = DEFAULT_DEBUG_PORT, scrub: bool = True) -> int:
+def select_tab(driver, wanted: Optional[str]) -> None:
+    """Focus the tab whose title or URL contains `wanted`.
+
+    Attaching to a browser with several tabs open lands on an arbitrary one, and
+    silently capturing the wrong page is worse than failing.
+    """
+    if not wanted:
+        return
+    needle = wanted.casefold()
+    for handle in driver.window_handles:
+        driver.switch_to.window(handle)
+        if needle in (driver.title or "").casefold() or needle in (
+            driver.current_url or ""
+        ).casefold():
+            return
+    titles = []
+    for handle in driver.window_handles:
+        driver.switch_to.window(handle)
+        titles.append(f"  - {driver.title} — {driver.current_url}")
+    raise SystemExit(
+        f"No open tab matches {wanted!r}. Tabs currently open:\n" + "\n".join(titles)
+    )
+
+
+def capture_page(
+    out_path: str,
+    port: int = DEFAULT_DEBUG_PORT,
+    scrub: bool = True,
+    tab: Optional[str] = None,
+) -> int:
     driver = attach(port)
+    select_tab(driver, tab)
     url, title = driver.current_url, driver.title
     html = driver.page_source
 
@@ -257,6 +354,10 @@ def main(argv: list[str] | None = None) -> int:
     p_page.add_argument(
         "--no-scrub", action="store_true", help="save without redacting (not advised)"
     )
+    p_page.add_argument(
+        "--tab",
+        help="capture the tab whose title or URL contains this, e.g. --tab newsource",
+    )
 
     p_scrub = sub.add_parser("scrub", help="redact a saved HTML file in place")
     p_scrub.add_argument("path")
@@ -267,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "doctor":
         return doctor(args.port)
     if args.command == "page":
-        return capture_page(args.out, args.port, scrub=not args.no_scrub)
+        return capture_page(
+            args.out, args.port, scrub=not args.no_scrub, tab=args.tab
+        )
     return scrub_file(args.path, args.out)
 
 
