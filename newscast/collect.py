@@ -49,6 +49,7 @@ from newscast.scoring import (
     grade_pool,
     group_related,
 )
+from newscast.slotting import demo_holes, fill_holes, place_pool
 from newscast.timing import story_seconds
 from newscast.validator import validate_show
 from newscast.wires.cnn import parse_listing, parse_story_details
@@ -56,6 +57,11 @@ from newscast.wires.cnn_script import WireScript, parse_wire_script
 from newscast.wires.stub import StoryStub
 
 REQUIRED_KEYS = ("CNN_USER", "CNN_PASS")
+
+
+# The gap the agent may fill in each block. An assumption, and labelled as one
+# wherever it reaches a report — the real holes come from the rundown (§11.20).
+DEMO_HOLE_SECONDS = 150.0
 
 
 def log(step: str, message: str = "", **extra) -> None:
@@ -276,6 +282,8 @@ def write_report(
     config: ShowConfig,
 ) -> str:
     built = [c for c in collected if c.assembly]
+    placements = place_pool(culled.kept)
+    fill = fill_holes(placements, demo_holes(DEMO_HOLE_SECONDS, config), config)
     show = Show(blocks=[Block(half=1, label="A", stories=[c.assembly.story for c in built])])
     report = validate_show(show, config)
 
@@ -316,6 +324,43 @@ def write_report(
     for group, reason in culled.dropped:
         add(f"  {group.total:6.2f}  {group.slug[:52]}")
         add(f"          {reason}")
+    add("")
+
+    add(_rule())
+    add("SLOTTING (§6 phase 2, §11.27)")
+    add(_rule())
+    add("")
+    add("Placement is tonal, not tabular: there is no rule that says a shooting")
+    add("goes in B. Every surviving story gets a primary block, a backup block —")
+    add("so a story that loses its slot has somewhere to go — and a heaviness")
+    add("weight from 0 to 1. Within a block, heavier runs first, which is §2's")
+    add('"heavy to light" made numeric.')
+    add("")
+    add(f"The holes are assumed at {DEMO_HOLE_SECONDS:.0f}s a block. The real ones are the")
+    add("rundown's budget minus what the human producer already placed, and")
+    add("neither number exists yet (§11.20, and no Inception adapter).")
+    add("")
+    for placement in placements:
+        add(f"  {placement.explain()[:74]}")
+        for reason in placement.reasons:
+            add(f"      - {reason}")
+    add("")
+    add("  --- the show these would make ---")
+    for block in config.blocks:
+        ordered = fill.order(block.name)
+        used = fill.used_seconds.get(block.name, 0.0)
+        add(f"  {block.name}  {used:5.0f}s  {block.purpose}")
+        for position, placement in enumerate(ordered, start=1):
+            add(f"       {position}. [{placement.heaviness:.2f}] "
+                f"{placement.slug[:52]}")
+        if not ordered:
+            add("       (nothing slotted here)")
+    if fill.unplaced:
+        add("")
+        add("  --- fit nowhere ---")
+        for placement, why in fill.unplaced:
+            add(f"  {placement.slug[:50]}")
+            add(f"      {why}")
     add("")
 
     add(_rule())
