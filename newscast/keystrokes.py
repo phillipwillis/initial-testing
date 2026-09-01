@@ -254,6 +254,12 @@ def plan_keystrokes(story: Story, config: ShowConfig | None = None) -> Keystroke
                     plan.add(button("SOT", "a CG drops out of green; turn it back on"))
 
             elif isinstance(element, VOCue):
+                if green:
+                    # [CONT VO] puts the anchor back on a live mic over new
+                    # video. That copy is read, so it must leave green or it
+                    # will not scroll on the prompter.
+                    plan.add(button("SOT", "green off: the anchor reads again"))
+                    green = False
                 plan.add(
                     text("[VO"), wait(EXPAND_PAUSE_SECONDS, "VO expands"), key("ENTER")
                 )

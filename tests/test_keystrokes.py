@@ -151,6 +151,30 @@ class GreenModeTests(unittest.TestCase):
         plan = plan_keystrokes(parse_story(script))
         self.assertGreaterEqual(buttons(plan).count("SOT"), 2)
 
+    def test_cont_vo_leaves_green_because_the_anchor_reads_again(self):
+        """A VOSOTVOSOT returns to a live mic between soundbites. Copy left in
+        green does not scroll on the prompter."""
+        script = (
+            "[CAM3 OX2 - D]\n[MEGAN]\nONE.\n[VO]\n[CG: A]\nTWO.\n"
+            "~~~New Segment~~~\n[SOT 0:10]\n[CG: B]\n\"bite one\"\n"
+            "[CONT VO]\nTHREE.\n"
+            "~~~New Segment~~~\n[SOT 0:10]\n[CG: C]\n\"bite two\"\n"
+            "[ON CAM - BACK TO D]\n[MEGAN]\nFOUR.\n[#####]"
+        )
+        plan = plan_keystrokes(parse_story(script))
+
+        leaves_green = [
+            i for i, step in enumerate(plan.steps)
+            if step.kind == "button" and "anchor reads again" in step.reason
+        ]
+        self.assertEqual(len(leaves_green), 1, "CONT VO should leave green once")
+
+        typed_three = next(
+            i for i, step in enumerate(plan.steps)
+            if step.kind == "text" and step.value == "THREE."
+        )
+        self.assertLess(leaves_green[0], typed_three)
+
     def test_green_is_left_before_the_story_ends(self):
         script = "[CAM3 OX2]\n[MEGAN]\nINTRO.\n[SOT 0:10]\n[CG: X]\n\"bite\"\n[#####]"
         plan = plan_keystrokes(parse_story(script))

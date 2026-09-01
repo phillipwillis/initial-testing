@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Sequence
 
 from newscast.config import ShowConfig
 from newscast.markup import parse_story
@@ -43,10 +43,28 @@ class Assembly:
     markup: str
     notes: list[str] = field(default_factory=list)
     cgs: list[str] = field(default_factory=list)
+    sources: list[str] = field(default_factory=list)
 
     @property
     def slug(self) -> str:
         return self.story.slug
+
+
+@dataclass
+class Bite:
+    """One soundbite, and the wire row it has to be pulled from.
+
+    CNN files a row per speaker, so a story's second soundbite lives under a
+    different story number from its first. Losing that mapping means an editor
+    cannot find the clip, which is what §5 R15 exists to prevent.
+    """
+
+    wire: WireScript
+    stub: StoryStub
+
+    @property
+    def source_ref(self) -> str:
+        return self.stub.story_number or self.stub.id or "CNN Newsource"
 
 
 def shorten_cg(text: str, ceiling: int) -> tuple[str, bool]:
@@ -107,6 +125,18 @@ def _body_lines(text: str, cgs: list[str], ceiling: int, notes: list[str]) -> li
     return out
 
 
+def _split_evenly(lines: list[str], parts: int) -> list[list[str]]:
+    """Split voice-over copy into the runs that sit between soundbites."""
+    if parts <= 1:
+        return [lines]
+    size = max(1, len(lines) // parts)
+    chunks = [lines[i * size : (i + 1) * size] for i in range(parts)]
+    leftover = lines[parts * size :]
+    if leftover:
+        chunks[-1] = chunks[-1] + leftover
+    return chunks
+
+
 def _daypart_notes(config: ShowConfig, *blocks: str) -> list[str]:
     """R13. Wire copy is written for whichever show ran it first."""
     found: list[str] = []
@@ -128,9 +158,16 @@ def assemble_story(
     stub: StoryStub,
     shot: str = "CAM3 OX2",
     anchor: str = "MEGAN",
+    extra_bites: Sequence[tuple[WireScript, StoryStub]] = (),
+    max_bites: int = 2,
     config: ShowConfig | None = None,
 ) -> Assembly:
-    """Build a §4 story from a wire script.
+    """Build a §4 story from a wire script, and any related soundbites.
+
+    `extra_bites` are other rows the wire filed for the same story — CNN files
+    one per speaker. They become additional SOT segments rather than separate
+    stories, each carrying its own source, because they are the same story told
+    by more than one person.
 
     `shot` and `anchor` come from the block the story is slotted into (§11.2,
     §11.3); slotting itself is §10.7 and not done here.
@@ -150,13 +187,31 @@ def assemble_story(
     tag = _copy_lines(wire.tag)
 
     source_ref = stub.story_number or stub.id or "CNN Newsource"
+    sources: list[str] = []
     lines: list[str] = []
+
+    # Every row that actually carries a soundbite, the lead first. §3 caps the
+    # form at VOSOTVOSOT, so no more than two are used.
+    bites = [Bite(wire, stub)] if wire.sot_body else []
+    bites.extend(
+        Bite(extra_wire, extra_stub)
+        for extra_wire, extra_stub in extra_bites
+        if extra_wire.sot_body
+    )
+    if len(bites) > max_bites:
+        dropped = [b.source_ref for b in bites[max_bites:]]
+        notes.append(
+            f"{len(bites)} soundbites available; used {max_bites} "
+            f"(§3 caps the form at VOSOTVOSOT). Unused: {', '.join(dropped)}"
+        )
+        bites = bites[:max_bites]
 
     if wire.is_package:
         lines.append(f"[{shot}]")
         lines.append(f"[{anchor}]")
         lines.extend(lead_in)
         lines.append(f"[SOURCE: CNN Newsource {source_ref}]")
+        sources.append(source_ref)
         lines.append(
             f"[NOTE: package as delivered; CNN's printed duration is not the "
             f"running time (§11.23) — confirm the TRT before air]"
@@ -174,30 +229,49 @@ def assemble_story(
         else:
             notes.append("no tag in the wire copy — R8 flags a package without one")
 
-    elif wire.sot_body:
+    elif bites:
+        # §3 composite. One soundbite gives VOSOT; two give VOSOTVOSOT, which
+        # §3 calls the largest form justifiable for a single story.
         lines.append(f"[{shot} - D]")
         lines.append(f"[{anchor}]")
         lines.extend(lead_in)
         lines.append("[VO]")
         lines.append(f"[CG: {cg_text}]")
-        lines.extend(_copy_lines(wire.vo_script))
-        lines.append("~~~New Segment~~~")
-        lines.append(f"[SOURCE: CNN Newsource {source_ref}]")
-        lines.append(
-            "[NOTE: pull the soundbite; take in and out points from the "
-            "transcript, not the wire script (§11.7)]"
-        )
-        lines.append(f"[SOT {wire.trt or '0:10'}]")
-        speaker = wire.supers[0] if wire.supers else None
-        bite_cg, bite_trimmed = shorten_cg(
-            f"{speaker.name}, {speaker.title}" if speaker else headline, ceiling
-        )
-        if bite_trimmed:
-            notes.append(f"soundbite CG trimmed to fit: {bite_cg!r}")
-        cgs.append(bite_cg)
-        lines.append(f"[CG: {bite_cg}]")
-        bite = _copy_lines(wire.sot_body)
-        lines.append(f'"{" ".join(bite)}"' if bite else '"…"')
+
+        body = _copy_lines(wire.vo_script) or _copy_lines(wire.body)
+        chunks = _split_evenly(body, len(bites))
+
+        for position, bite in enumerate(bites):
+            lines.extend(chunks[position])
+            lines.append("~~~New Segment~~~")
+            lines.append(f"[SOURCE: CNN Newsource {bite.source_ref}]")
+            lines.append(
+                "[NOTE: pull the soundbite; take in and out points from the "
+                "transcript, not the wire script (§11.7)]"
+            )
+            sources.append(bite.source_ref)
+            lines.append(f"[SOT {bite.wire.trt or '0:10'}]")
+
+            speaker = bite.wire.supers[0] if bite.wire.supers else None
+            bite_cg, bite_trimmed = shorten_cg(
+                f"{speaker.name}, {speaker.title}" if speaker else headline, ceiling
+            )
+            if bite_trimmed:
+                notes.append(f"soundbite CG trimmed to fit: {bite_cg!r}")
+            if speaker is None:
+                notes.append(
+                    f"no super on {bite.source_ref} — the soundbite CG is a "
+                    "placeholder and needs a name and title"
+                )
+            cgs.append(bite_cg)
+            lines.append(f"[CG: {bite_cg}]")
+
+            spoken = _copy_lines(bite.wire.sot_body)
+            lines.append(f'"{" ".join(spoken)}"' if spoken else '"…"')
+
+            if position + 1 < len(bites):
+                lines.append("[CONT VO]")
+
         lines.append("[ON CAM - BACK TO D]")
         lines.append(f"[{anchor}]")
         lines.extend(tag or ["MORE ON THIS AS WE GET IT."])
@@ -226,7 +300,9 @@ def assemble_story(
         notes.append(f"EMBARGO: {stub.embargo} — check before airing")
 
     story = parse_story(markup, slug=headline, kind=StoryKind.NEWS)
-    return Assembly(story=story, markup=markup, notes=notes, cgs=cgs)
+    return Assembly(
+        story=story, markup=markup, notes=notes, cgs=cgs, sources=sources
+    )
 
 
 def _mmss(seconds: Optional[float]) -> str:

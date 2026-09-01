@@ -233,6 +233,65 @@ def _corroboration(stub: StoryStub, pool: Sequence[StoryStub]) -> float:
     return _saturate(matches, half=1.5)
 
 
+@dataclass
+class StoryGroup:
+    """One story, and every row the wire filed for it.
+
+    CNN files a row per speaker: one arrest turns up as the FBI on the reward,
+    the attorney on the party, and the FBI again on the tips. Those are not
+    three stories competing for a slot — they are one story with three
+    soundbites to choose from, which is §3's VOSOTVOSOT.
+
+    The lead is the best-graded row and supplies the copy; the rest are kept for
+    their soundbites, each with its own source.
+    """
+
+    lead: Grade
+    related: list[Grade] = field(default_factory=list)
+
+    @property
+    def members(self) -> list[Grade]:
+        return [self.lead] + self.related
+
+    @property
+    def stub(self) -> StoryStub:
+        return self.lead.stub
+
+    @property
+    def total(self) -> float:
+        return self.lead.total
+
+    @property
+    def slug(self) -> str:
+        return self.lead.slug
+
+    @property
+    def bite_count(self) -> int:
+        """How many rows carry a soundbite we could use."""
+        return sum(1 for g in self.members if g.stub.footage_type.upper() in
+                   {"SOT", "CUT SOUND", "VOSOT", "VO/SOT"})
+
+
+def group_related(
+    grades: Sequence[Grade], threshold: float = 0.45
+) -> list[StoryGroup]:
+    """Collapse rows of the same story into one group, best first.
+
+    Ordering matters: `grades` arrives ranked, so the first row met for a story
+    is its best one and becomes the lead.
+    """
+    groups: list[StoryGroup] = []
+    for grade in grades:
+        home = next(
+            (g for g in groups if similarity(grade.stub, g.stub) > threshold), None
+        )
+        if home is None:
+            groups.append(StoryGroup(lead=grade))
+        else:
+            home.related.append(grade)
+    return groups
+
+
 def grade_pool(
     stubs: Sequence[StoryStub], now: Optional[datetime] = None
 ) -> list[Grade]:

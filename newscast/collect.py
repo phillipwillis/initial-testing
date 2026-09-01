@@ -42,7 +42,13 @@ from newscast.config import ShowConfig
 from newscast.env import describe, load_env, require
 from newscast.keystrokes import plan_keystrokes
 from newscast.model import Block, Show
-from newscast.scoring import Grade, compile_words, grade_pool, similarity
+from newscast.scoring import (
+    Grade,
+    StoryGroup,
+    compile_words,
+    grade_pool,
+    group_related,
+)
 from newscast.timing import story_seconds
 from newscast.validator import validate_show
 from newscast.wires.cnn import parse_listing, parse_story_details
@@ -64,73 +70,56 @@ def log(step: str, message: str = "", **extra) -> None:
 
 @dataclass
 class Cull:
-    kept: list[Grade] = field(default_factory=list)
-    dropped: list[tuple[Grade, str]] = field(default_factory=list)
+    kept: list[StoryGroup] = field(default_factory=list)
+    dropped: list[tuple[StoryGroup, str]] = field(default_factory=list)
 
 
 def cull(
-    grades: list[Grade],
+    groups: list[StoryGroup],
     keep: int = 8,
     max_packages: int = 2,
-    duplicate_threshold: float = 0.45,
     config: ShowConfig | None = None,
 ) -> Cull:
-    """Reduce a ranked pool to what a noon show can actually carry.
+    """Reduce ranked story groups to what a noon show can carry.
 
     Rank alone does not decide this. §5 R9 caps packages per block, §11.10 rules
-    out sports, material with neither script nor video cannot be built into a
-    story however well it scores — and, the one that bites hardest, **the same
-    story arrives several times**.
+    out sports, and material with neither script nor video cannot be built into
+    a story however well it scores.
 
-    CNN files a soundbite per speaker, so one shooting turns up as three rows:
-    the FBI on the reward, the attorney on the party, the FBI on the tips.
-    §7 scores all three highly and identically, and corroboration scores them
-    *up* for agreeing with each other. Ranked alone they take the top of the
-    show and air the same story three times. So a story close enough to one
-    already kept is dropped, and the note says which one it duplicates.
+    Duplicates are not handled here any more. CNN files a row per speaker, and
+    those rows are the same story with different soundbites — so they are merged
+    upstream by `group_related` and become one composite (§3 VOSOTVOSOT), with
+    each soundbite keeping its own source. Dropping them lost material a
+    producer would have used.
     """
     config = config or ShowConfig()
     result = Cull()
     packages = 0
 
-    for grade in grades:
-        stub = grade.stub
+    for group in groups:
+        stub = group.stub
 
         if not stub.has_script and not stub.has_video:
-            result.dropped.append((grade, "no script and no video — nothing to build from"))
-            continue
-
-        twin = next(
-            (
-                kept
-                for kept in result.kept
-                if similarity(stub, kept.stub) > duplicate_threshold
-            ),
-            None,
-        )
-        if twin is not None:
-            result.dropped.append(
-                (grade, f"same story as {twin.stub.slug[:44]!r}, which ranked higher")
-            )
+            result.dropped.append((group, "no script and no video — nothing to build from"))
             continue
 
         if _is_sport(stub):
-            result.dropped.append((grade, "sports — the noon show carries none (§11.10)"))
+            result.dropped.append((group, "sports — the noon show carries none (§11.10)"))
             continue
 
         if stub.footage_type.upper() in {"PKG", "DONUT", "LOOK LIVE"}:
             if packages >= max_packages:
                 result.dropped.append(
-                    (grade, f"package budget is {max_packages} per block (§5 R9)")
+                    (group, f"package budget is {max_packages} per block (§5 R9)")
                 )
                 continue
             packages += 1
 
         if len(result.kept) >= keep:
-            result.dropped.append((grade, f"below the cut — only {keep} slots"))
+            result.dropped.append((group, f"below the cut — only {keep} slots"))
             continue
 
-        result.kept.append(grade)
+        result.kept.append(group)
 
     return result
 
@@ -156,11 +145,20 @@ def _is_sport(stub: StoryStub) -> bool:
 
 @dataclass
 class Collected:
-    stub: StoryStub
-    grade: Grade
+    group: StoryGroup
     wire: Optional[WireScript] = None
+    extra_bites: list[tuple[WireScript, StoryStub]] = field(default_factory=list)
     assembly: Optional[Assembly] = None
     error: str = ""
+    fetch_notes: list[str] = field(default_factory=list)
+
+    @property
+    def stub(self) -> StoryStub:
+        return self.group.stub
+
+    @property
+    def grade(self) -> Grade:
+        return self.group.lead
 
 
 def collect_stubs(driver, target: int) -> list[StoryStub]:
@@ -214,29 +212,48 @@ def run(
         raise SystemExit("no stories collected — is the listing empty or the session out?")
 
     grades = grade_pool(stubs)
-    log("grade", "ranked the pool", stories=len(grades), top=f"{grades[0].total:.2f}")
+    groups = group_related(grades)
+    merged = sum(len(g.related) for g in groups)
+    log("grade", "ranked and grouped", stories=len(groups), merged_rows=merged,
+        top=f"{groups[0].total:.2f}")
 
-    culled = cull(grades, keep=keep, config=config)
+    culled = cull(groups, keep=keep, config=config)
     log("cull", "kept", kept=len(culled.kept), dropped=len(culled.dropped))
 
     # The listing order is what the row indices refer to.
     order = {id(s): i for i, s in enumerate(stubs)}
     collected: list[Collected] = []
 
-    for position, grade in enumerate(culled.kept, start=1):
-        stub = grade.stub
-        index = order.get(id(stub), 0)
-        log("expand", f"{position}/{len(culled.kept)}", story=stub.slug[:48])
-        wire, error = fetch_script(driver, stub, index)
-        item = Collected(stub=stub, grade=grade, wire=wire, error=error)
+    for position, group in enumerate(culled.kept, start=1):
+        log("expand", f"{position}/{len(culled.kept)}", story=group.slug[:44],
+            rows=len(group.members))
+        item = Collected(group=group)
 
-        if wire is not None:
+        # Every row of the story is fetched, not just the lead: each carries a
+        # different soundbite, and its own source for the editor.
+        for member in group.members:
+            stub = member.stub
+            wire, error = fetch_script(driver, stub, order.get(id(stub), 0))
+            if wire is None:
+                item.fetch_notes.append(
+                    f"{stub.story_number or stub.slug[:30]}: {error}"
+                )
+            elif item.wire is None:
+                item.wire = wire
+            else:
+                item.extra_bites.append((wire, stub))
+            time.sleep(0.8)
+
+        if item.wire is None:
+            item.error = "no script on any row of this story"
+        else:
             try:
-                item.assembly = assemble_story(wire, stub, config=config)
+                item.assembly = assemble_story(
+                    item.wire, group.stub, extra_bites=item.extra_bites, config=config
+                )
             except Exception as exc:
                 item.error = f"assembly failed: {type(exc).__name__}: {exc}"
         collected.append(item)
-        time.sleep(0.8)
 
     text = write_report(collected, culled, stubs, out_path, config)
     return text
@@ -283,18 +300,21 @@ def write_report(
     add(_rule())
     add("RANKING")
     add(_rule())
-    for position, grade in enumerate(culled.kept, start=1):
-        add(f"{position:>3}. {grade.total:6.2f}  {grade.stub.slug[:60]}")
-        add(f"       {grade.explain()[8:]}")
-        for note in grade.notes:
+    for position, group in enumerate(culled.kept, start=1):
+        add(f"{position:>3}. {group.total:6.2f}  {group.slug[:60]}")
+        add(f"       {group.lead.explain()[8:]}")
+        for note in group.lead.notes:
             add(f"       - {note}")
+        for related in group.related:
+            add(f"       + merged: {related.slug[:56]}")
+            add(f"                 {related.stub.story_number or '(no story number)'}")
     add("")
 
     add(_rule())
     add("CULLED")
     add(_rule())
-    for grade, reason in culled.dropped:
-        add(f"  {grade.total:6.2f}  {grade.stub.slug[:52]}")
+    for group, reason in culled.dropped:
+        add(f"  {group.total:6.2f}  {group.slug[:52]}")
         add(f"          {reason}")
     add("")
 
@@ -315,10 +335,18 @@ def write_report(
         add(f"story number : {item.stub.story_number or item.stub.id or '(none)'}")
         add(f"source       : {item.stub.source}")
         add(f"footage type : {item.stub.footage_type or '(wire article)'}")
+        if item.group.related:
+            add(f"merged rows  : {len(item.group.members)} rows of this story")
+            for member in item.group.related:
+                add(f"               {member.stub.story_number or '(no number)':<10} "
+                    f"{member.slug[:48]}")
         add(f"wire duration: {item.stub.wire_duration_seconds or '(none)'}  "
             "<- a sort key, never a TRT (§11.23)")
         if item.stub.embargo:
             add(f"EMBARGO      : {item.stub.embargo}")
+
+        for note in item.fetch_notes:
+            add(f"  fetch note   : {note}")
 
         if item.error:
             add("")
@@ -337,6 +365,11 @@ def write_report(
         for cg in assembly.cgs:
             add(f"  [{len(cg):>2}] {cg}")
         add("")
+        if assembly.sources:
+            add("  --- sources the editor pulls from ---")
+            for source in assembly.sources:
+                add(f"  {source}")
+            add("")
         if assembly.notes:
             add("  --- editor notes ---")
             for note in assembly.notes:
@@ -411,20 +444,35 @@ def run_offline(
     log("offline", "loaded", captures=len(html_paths), stubs=len(unique),
         scripts=len(scripts))
 
-    grades = grade_pool(unique)
-    culled = cull(grades, keep=keep, config=config)
+    groups = group_related(grade_pool(unique))
+    merged = sum(len(g.related) for g in groups)
+    log("grade", "ranked and grouped", stories=len(groups), merged_rows=merged)
+
+    culled = cull(groups, keep=keep, config=config)
     log("cull", "kept", kept=len(culled.kept), dropped=len(culled.dropped))
 
     collected: list[Collected] = []
-    for grade in culled.kept:
-        stub = grade.stub
-        wire = scripts.get(stub.story_number or "")
-        item = Collected(stub=stub, grade=grade, wire=wire)
-        if wire is None:
-            item.error = "no script in the captures — this row was not expanded"
+    for group in culled.kept:
+        item = Collected(group=group)
+        for member in group.members:
+            wire = scripts.get(member.stub.story_number or "")
+            if wire is None:
+                item.fetch_notes.append(
+                    f"{member.stub.story_number or member.slug[:30]}: "
+                    "not expanded in the captures"
+                )
+            elif item.wire is None:
+                item.wire = wire
+            else:
+                item.extra_bites.append((wire, member.stub))
+
+        if item.wire is None:
+            item.error = "no script in the captures — no row of this story was expanded"
         else:
             try:
-                item.assembly = assemble_story(wire, stub, config=config)
+                item.assembly = assemble_story(
+                    item.wire, group.stub, extra_bites=item.extra_bites, config=config
+                )
             except Exception as exc:
                 item.error = f"assembly failed: {type(exc).__name__}: {exc}"
         collected.append(item)

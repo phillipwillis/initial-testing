@@ -6,7 +6,13 @@ from datetime import datetime
 from newscast.assemble import assemble_story, shorten_cg
 from newscast.collect import _is_sport, cull
 from newscast.config import ShowConfig
-from newscast.scoring import compile_words, grade_pool, similarity, story_key
+from newscast.scoring import (
+    compile_words,
+    grade_pool,
+    group_related,
+    similarity,
+    story_key,
+)
 from newscast.wires.cnn_script import parse_wire_script
 from newscast.wires.stub import ContentType, StoryStub
 
@@ -128,20 +134,44 @@ class DuplicateTests(unittest.TestCase):
             0.45,
         )
 
-    def test_culling_keeps_one_and_says_which(self):
+    def test_related_rows_merge_into_one_story_rather_than_being_dropped(self):
+        """CNN files a row per speaker. Those are one story with two
+        soundbites (§3 VOSOTVOSOT), not two stories competing for a slot."""
         pool = [
             stub("CA: MASS SHOOTING ARREST/FBI-$20K REWARD", footage_type="SOT"),
             stub("CA: MASS SHOOTING ARREST/ATTY-TERRORIZED", footage_type="SOT"),
             stub("Council raises water rates", footage_type="VO"),
         ]
-        result = cull(grade_pool(pool, now=NOW), keep=5)
-        self.assertEqual(len(result.kept), 2)
-        self.assertTrue(any("same story as" in reason for _, reason in result.dropped))
+        groups = group_related(grade_pool(pool, now=NOW))
+        self.assertEqual(len(groups), 2)
+
+        shooting = next(g for g in groups if "SHOOTING" in g.slug)
+        self.assertEqual(len(shooting.members), 2)
+        self.assertEqual(shooting.bite_count, 2)
+
+    def test_the_best_ranked_row_leads_the_group(self):
+        pool = [
+            stub("CA: FIRE/WITNESS-SAW SMOKE", footage_type="SOT"),
+            stub("CA: FIRE/CHIEF-TWO DEAD IN BLAZE", footage_type="SOT"),
+        ]
+        group = group_related(grade_pool(pool, now=NOW))[0]
+        self.assertIn("CHIEF", group.slug)  # "dead" outscores "saw smoke"
+        self.assertEqual(len(group.related), 1)
+
+    def test_a_group_keeps_every_member_s_source(self):
+        """Losing the mapping means an editor cannot find the second clip."""
+        pool = [
+            stub("CA: FIRE/CHIEF-TWO DEAD", footage_type="SOT", story_number="WE-001MO"),
+            stub("CA: FIRE/WITNESS-SAW SMOKE", footage_type="SOT", story_number="WE-002MO"),
+        ]
+        group = group_related(grade_pool(pool, now=NOW))[0]
+        numbers = {g.stub.story_number for g in group.members}
+        self.assertEqual(numbers, {"WE-001MO", "WE-002MO"})
 
 
 class CullTests(unittest.TestCase):
     def test_material_with_nothing_to_build_from_is_dropped(self):
-        result = cull(grade_pool([stub("Photo of a cat", content_type=())], now=NOW))
+        result = cull(group_related(grade_pool([stub("Photo of a cat", content_type=())], now=NOW)))
         self.assertEqual(result.kept, [])
         self.assertIn("nothing to build from", result.dropped[0][1])
 
@@ -156,12 +186,12 @@ class CullTests(unittest.TestCase):
                 "Guitar found in an attic sells at auction",
             )
         ]
-        result = cull(grade_pool(pool, now=NOW), keep=10, max_packages=2)
+        result = cull(group_related(grade_pool(pool, now=NOW)), keep=10, max_packages=2)
         self.assertEqual(len(result.kept), 2)
         self.assertTrue(any("package budget" in r for _, r in result.dropped))
 
-    def test_duplicates_are_removed_before_the_package_budget(self):
-        """Otherwise three soundbites off one story spend the whole budget."""
+    def test_merged_rows_spend_one_package_slot_not_several(self):
+        """Otherwise three rows off one story eat the whole block budget."""
         pool = [
             stub("CA: MASS SHOOTING ARREST/FBI-REWARD", footage_type="PKG",
                  content_type=(ContentType.VIDEO,)),
@@ -170,14 +200,25 @@ class CullTests(unittest.TestCase):
             stub("State fair opens in Blackfoot", footage_type="PKG",
                  content_type=(ContentType.VIDEO,)),
         ]
-        result = cull(grade_pool(pool, now=NOW), keep=10, max_packages=2)
+        result = cull(group_related(grade_pool(pool, now=NOW)), keep=10, max_packages=2)
         self.assertEqual(len(result.kept), 2)
         self.assertFalse(any("package budget" in r for _, r in result.dropped))
 
     def test_nothing_is_dropped_silently(self):
-        pool = [stub(f"Story {n}", footage_type="VO") for n in range(6)]
-        result = cull(grade_pool(pool, now=NOW), keep=2)
-        self.assertEqual(len(result.kept) + len(result.dropped), len(pool))
+        pool = [
+            stub(slug, footage_type="VO")
+            for slug in (
+                "Council raises water rates in October",
+                "Shelter dog adopted after four hundred days",
+                "New splash pad opens on the west side",
+                "Snowpack survey finds a dry winter ahead",
+                "Library book sale runs through Saturday",
+                "Bonneville names a new head football coach",
+            )
+        ]
+        groups = group_related(grade_pool(pool, now=NOW))
+        result = cull(groups, keep=2)
+        self.assertEqual(len(result.kept) + len(result.dropped), len(groups))
         self.assertTrue(all(reason for _, reason in result.dropped))
 
 

@@ -312,6 +312,16 @@ story regardless of its absolute rank.
 
 Local stories placed by the human are fixed points; the agent fills around them.
 
+**Related rows merge; they are not culled.** CNN files one row per speaker, so a single arrest
+arrives as three rows — the FBI on the reward, the attorney on the party, the FBI again on the
+tips. Those are not three stories competing for a slot. They are one story with three
+soundbites to choose from, and the right answer is a §3 composite: VOSOT for one bite,
+VOSOTVOSOT for two, which §3 calls the largest form justifiable for a single story.
+
+**Every soundbite keeps its own source.** The second bite lives under a different story number
+from the first, and losing that mapping means an editor cannot find the clip — which is what
+§5 R15 exists to prevent.
+
 ### Phase 3 — Deep research *(per selected story)*
 Now go get everything: full text, tags, keyword searches, and stories the wire marks as
 connected. A VO source is frequently linked to a SOT the collection pass never saw. Compile
@@ -515,6 +525,11 @@ None of these block the next milestone.
     script, and — for anchor copy — our own `estimate_read_time`, which is authoritative for
     the part a human reads. `newscast.probe` compares all of them on one story to find out
     which agree. *Still open: which source to trust for a package.*
+
+25. **Do related soundbite rows merge or compete?** ✅ Merge. CNN files a row per speaker;
+    they join into one story as a §3 composite, capped at two bites (VOSOTVOSOT), with each
+    bite carrying its own `[SOURCE: ...]`. Culling them lost material a producer would have
+    used. See §6 phase 2.
 
 24. **How is the monitor parked in D on OX1 or OX2?** The previous
     implementation backspaced away an auto-appended `-D` on OX3, OX4 and OX5, and did not on
