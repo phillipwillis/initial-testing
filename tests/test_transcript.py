@@ -304,3 +304,104 @@ class TrimPackageTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TranscriptReachesTheScriptTest(unittest.TestCase):
+    """§15 — a transcribed video changes what the assembled script says."""
+
+    SOT_WIRE = """Title: MARKET CLOSES EARLY
+Footage Type: VO
+--LEAD IN--
+THE FARMERS MARKET CLOSES EARLY TODAY.
+--VO SCRIPT--
+VENDORS PACK UP AT TWO THIS AFTERNOON.
+--SOT--
+An old line the wire never updated.
+--TAG--
+GET OUT THERE FAST.
+-----END-----"""
+
+    PKG_WIRE = """Title: MARKET CLOSES EARLY
+Footage Type: PKG
+--LEAD IN--
+DANIELLE MULLENIX HAS THE STORY.
+--REPORTER PKG-AS FOLLOWS--
+THE MARKET IS A BELOVED TRADITION.
+--TAG--
+THERE IS STILL TIME TO GET A DEAL.
+-----END-----"""
+
+    def stub(self):
+        from newscast.wires.stub import StoryStub
+
+        return StoryStub(id="1", slug="MARKET CLOSES EARLY", story_number="WE-001MO",
+                         wire_duration_seconds=95.0)
+
+    def test_a_transcribed_soundbite_supplies_its_own_length(self):
+        from newscast.assemble import assemble_story
+        from newscast.wires.cnn_script import parse_wire_script
+
+        bite = Soundbite(clips=[
+            Clip("WE-001MO", 4.0, 17.0, "I know we are closing up early.",
+                 speaker="DEBRA JONES"),
+        ])
+        assembly = assemble_story(
+            parse_wire_script(self.SOT_WIRE), self.stub(),
+            soundbites={"WE-001MO": bite},
+        )
+        self.assertIn("[SOT 0:13]", assembly.markup)
+        self.assertIn("0:04", assembly.markup)
+
+    def test_the_transcript_beats_the_wires_stale_script(self):
+        """§11.7 — wires ship old scripts against revamped packages."""
+        from newscast.assemble import assemble_story
+        from newscast.wires.cnn_script import parse_wire_script
+
+        bite = Soundbite(clips=[Clip("WE-001MO", 4.0, 17.0, "What was actually said.")])
+        assembly = assemble_story(
+            parse_wire_script(self.SOT_WIRE), self.stub(),
+            soundbites={"WE-001MO": bite},
+        )
+        self.assertIn("What was actually said.", assembly.markup)
+        self.assertNotIn("An old line the wire never updated", assembly.markup)
+
+    def test_a_two_clip_sot_keeps_both_sources(self):
+        """§11.26 and R15 — an editor has to find every clip."""
+        from newscast.assemble import assemble_story
+        from newscast.wires.cnn_script import parse_wire_script
+
+        bite = Soundbite(clips=[
+            Clip("WE-001MO", 4.0, 12.0, "First."),
+            Clip("WE-002MO", 30.0, 37.0, "Second."),
+        ])
+        assembly = assemble_story(
+            parse_wire_script(self.SOT_WIRE), self.stub(),
+            soundbites={"WE-001MO": bite},
+        )
+        self.assertIn("WE-002MO", assembly.markup)
+        self.assertIn("clip 2 of 2", assembly.markup)
+        self.assertIn("[SOT 0:15]", assembly.markup)
+
+    def test_without_a_transcript_the_length_is_flagged_as_not_a_running_time(self):
+        from newscast.assemble import assemble_story
+        from newscast.wires.cnn_script import parse_wire_script
+
+        assembly = assemble_story(parse_wire_script(self.SOT_WIRE), self.stub())
+        self.assertIn("not a running time", " ".join(assembly.notes))
+
+    def test_a_trimmed_package_carries_the_trims_length_and_note(self):
+        from newscast.assemble import assemble_story
+        from newscast.wires.cnn_script import parse_wire_script
+
+        t = build_transcript(
+            words([("This morning the market opened as usual.", 0.0, 5.0),
+                   ("Organizers say it closes at two.", 5.0, 11.0),
+                   ("They blame the wind.", 11.0, 16.0)]),
+            source_ref="WE-001MO",
+        )
+        trim = trim_package(t, ShowConfig().daypart_phrases)
+        assembly = assemble_story(
+            parse_wire_script(self.PKG_WIRE), self.stub(), trim=trim,
+        )
+        self.assertIn("[PKG 0:11]", assembly.markup)
+        self.assertIn("daypart", assembly.markup)

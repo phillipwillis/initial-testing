@@ -825,6 +825,23 @@ stays small and fails loudly, and every decision worth testing is a pure functio
 `python3 -m newscast.capture doctor` now checks for `ffmpeg`, `ffprobe` and `faster-whisper`
 alongside Chrome and Selenium.
 
+### What it changes in an assembled script
+
+`assemble_story` takes `soundbites=` and `trim=`, and when they are there the script stops
+guessing:
+
+- The SOT cue carries the **transcript's** length, not the wire's number, and a note per clip
+  naming its in/out points and its source.
+- The quoted copy is the **transcript's** words, because that is what is actually on the tape.
+- A trimmed package carries the trim's length and what came off it.
+
+Without them the script still assembles from the wire, and an editor note says the length is
+the wire's number rather than a running time — so the gap is visible rather than assumed away.
+
+*Found while wiring this up:* the wire parser was not ending a VO or reporter section at a
+`--SOT--` marker, so in the ordinary VOSOT shape the soundbite bled into the anchor's copy and
+would have been read on air.
+
 ---
 
 ## 16. The model layer

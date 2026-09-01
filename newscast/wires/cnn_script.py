@@ -213,7 +213,10 @@ def parse_wire_script(raw: str) -> WireScript:
 
     body_starts = VO_SCRIPT_MARKERS + PKG_MARKERS + SOT_MARKERS
     lead_in_ends = body_starts + TAG_MARKERS + END_MARKERS
-    body_ends = TAG_MARKERS + END_MARKERS
+    # A body section ends where a soundbite section starts. The ordinary VOSOT
+    # shape is --VO SCRIPT-- copy --SOT-- bite --TAG--, and without SOT here the
+    # bite bleeds into the anchor's copy and gets read on air.
+    body_ends = SOT_MARKERS + TAG_MARKERS + END_MARKERS
     supers_ends = LEAD_IN_MARKERS + body_starts
 
     script = WireScript(

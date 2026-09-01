@@ -402,3 +402,24 @@ class SupersTests(unittest.TestCase):
 
     def test_an_empty_block_is_no_supers(self):
         self.assertEqual(parse_supers(""), [])
+
+
+class SectionBoundaryTests(unittest.TestCase):
+    def test_a_soundbite_section_ends_the_vo_copy(self):
+        """The ordinary VOSOT shape. Without this the bite bleeds into the
+        anchor's copy and gets read on air."""
+        wire = parse_wire_script(
+            "--VO SCRIPT--\nVENDORS PACK UP AT TWO.\n"
+            "--SOT--\nI'm just glad I sold my cheeses.\n"
+            "--TAG--\nGET OUT THERE FAST.\n-----END-----"
+        )
+        self.assertEqual(wire.vo_script.strip(), "VENDORS PACK UP AT TWO.")
+        self.assertIn("cheeses", wire.sot_body)
+        self.assertNotIn("cheeses", wire.vo_script)
+
+    def test_a_soundbite_section_ends_a_reporter_track(self):
+        wire = parse_wire_script(
+            "--REPORTER PKG-AS FOLLOWS--\nTHE MARKET IS A TRADITION.\n"
+            "--SOT--\nIt's a shame they're closing.\n-----END-----"
+        )
+        self.assertNotIn("shame", wire.pkg_body)

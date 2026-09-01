@@ -23,6 +23,7 @@ from newscast.config import ShowConfig
 from newscast.markup import parse_story
 from newscast.model import Story, StoryKind
 from newscast.readtime import estimate_read_time
+from newscast.transcript import Soundbite, Trim, timecode
 from newscast.wires.cnn_script import WireScript
 from newscast.wires.stub import StoryStub
 
@@ -61,6 +62,12 @@ class Bite:
 
     wire: WireScript
     stub: StoryStub
+
+    # §15 — when the video has been transcribed, the soundbite is a real span
+    # of tape with a real length, and the wire's numbers stop being guesses.
+    # `soundbite` may hold several clips: one SOT can be two or three cut
+    # together, from one speaker or from different sources (§11.26).
+    soundbite: Optional[Soundbite] = None
 
     @property
     def source_ref(self) -> str:
@@ -161,6 +168,8 @@ def assemble_story(
     extra_bites: Sequence[tuple[WireScript, StoryStub]] = (),
     max_bites: int = 2,
     config: ShowConfig | None = None,
+    soundbites: Optional[dict[str, Soundbite]] = None,
+    trim: Optional[Trim] = None,
 ) -> Assembly:
     """Build a §4 story from a wire script, and any related soundbites.
 
@@ -192,9 +201,15 @@ def assemble_story(
 
     # Every row that actually carries a soundbite, the lead first. §3 caps the
     # form at VOSOTVOSOT, so no more than two are used.
-    bites = [Bite(wire, stub)] if wire.sot_body else []
+    soundbites = soundbites or {}
+
+    def _bite(w: WireScript, st: StoryStub) -> Bite:
+        ref = st.story_number or st.id or "CNN Newsource"
+        return Bite(w, st, soundbite=soundbites.get(ref))
+
+    bites = [_bite(wire, stub)] if wire.sot_body else []
     bites.extend(
-        Bite(extra_wire, extra_stub)
+        _bite(extra_wire, extra_stub)
         for extra_wire, extra_stub in extra_bites
         if extra_wire.sot_body
     )
@@ -212,14 +227,23 @@ def assemble_story(
         lines.extend(lead_in)
         lines.append(f"[SOURCE: CNN Newsource {source_ref}]")
         sources.append(source_ref)
-        lines.append(
-            f"[NOTE: package as delivered; CNN's printed duration is not the "
-            f"running time (§11.23) — confirm the TRT before air]"
-        )
-        duration = wire.trt or _mmss(stub.wire_duration_seconds)
-        lines.append(f"[PKG {duration}]" if duration else "[PKG]")
-        if not duration:
-            notes.append("no TRT anywhere — the package length is unknown")
+        if trim is not None:
+            lines.append(f"[NOTE: {trim.editor_note()}]")
+            lines.append(f"[PKG {timecode(trim.duration)}]")
+        else:
+            lines.append(
+                "[NOTE: package as delivered; CNN's printed duration is not the "
+                "running time (§11.23) — confirm the TRT before air]"
+            )
+            duration = wire.trt or _mmss(stub.wire_duration_seconds)
+            lines.append(f"[PKG {duration}]" if duration else "[PKG]")
+            if not duration:
+                notes.append("no TRT anywhere — the package length is unknown")
+            else:
+                notes.append(
+                    "the package length is the wire's number, not a running "
+                    "time — transcribe it to get the real one (§15)"
+                )
         lines.append(f"[CG: {cg_text}]")
         lines.extend(_body_lines(wire.pkg_body, cgs, ceiling, notes))
         if tag:
@@ -244,13 +268,27 @@ def assemble_story(
         for position, bite in enumerate(bites):
             lines.extend(chunks[position])
             lines.append("~~~New Segment~~~")
-            lines.append(f"[SOURCE: CNN Newsource {bite.source_ref}]")
-            lines.append(
-                "[NOTE: pull the soundbite; take in and out points from the "
-                "transcript, not the wire script (§11.7)]"
-            )
-            sources.append(bite.source_ref)
-            lines.append(f"[SOT {bite.wire.trt or '0:10'}]")
+            if bite.soundbite and bite.soundbite.clips:
+                # §15 — every clip keeps its own source, because a SOT can be
+                # cut from more than one of them (§11.26, R15).
+                for clip_source in bite.soundbite.sources:
+                    lines.append(f"[SOURCE: CNN Newsource {clip_source}]")
+                    sources.append(clip_source)
+                for editor_note in bite.soundbite.editor_notes():
+                    lines.append(f"[NOTE: {editor_note}]")
+                lines.append(f"[SOT {timecode(bite.soundbite.duration)}]")
+            else:
+                lines.append(f"[SOURCE: CNN Newsource {bite.source_ref}]")
+                lines.append(
+                    "[NOTE: pull the soundbite; take in and out points from the "
+                    "transcript, not the wire script (§11.7)]"
+                )
+                sources.append(bite.source_ref)
+                lines.append(f"[SOT {bite.wire.trt or '0:10'}]")
+                notes.append(
+                    f"{bite.source_ref} has no transcript, so its SOT length is "
+                    "the wire's number and not a running time (§11.23)"
+                )
 
             speaker = bite.wire.supers[0] if bite.wire.supers else None
             bite_cg, bite_trimmed = shorten_cg(
@@ -266,8 +304,13 @@ def assemble_story(
             cgs.append(bite_cg)
             lines.append(f"[CG: {bite_cg}]")
 
-            spoken = _copy_lines(bite.wire.sot_body)
-            lines.append(f'"{" ".join(spoken)}"' if spoken else '"…"')
+            # The transcript is the authoritative verbatim: a wire sometimes
+            # ships an old script against a revamped package (§11.7).
+            if bite.soundbite and bite.soundbite.text:
+                lines.append(f'"{bite.soundbite.text}"')
+            else:
+                spoken = _copy_lines(bite.wire.sot_body)
+                lines.append(f'"{" ".join(spoken)}"' if spoken else '"…"')
 
             if position + 1 < len(bites):
                 lines.append("[CONT VO]")
