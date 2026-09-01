@@ -190,6 +190,17 @@ class StructureTests(unittest.TestCase):
         self.assertIn("FARMERS MARKET", plan.typed_text)
 
     def test_a_clean_story_plans_without_warnings(self):
-        for name in ("example_rdr.txt", "example_vo.txt", "example_sot.txt"):
+        for name in ("example_rdr.txt", "example_vo.txt", "example_pkg.txt"):
             with self.subTest(name):
                 self.assertEqual(plan_keystrokes(parse_story(fixture(name))).warnings, [])
+
+    def test_parking_the_monitor_in_d_on_ox1_or_ox2_is_an_open_question(self):
+        """§11.24.
+
+        The previous implementation backspaced away an appended -D on OX3, OX4
+        and OX5, and did not on OX2 — so those three expand with it and OX2 does
+        not. The §3 SOT example parks the monitor in D on OX1, and how a
+        producer does that is not recorded anywhere. Warning beats guessing.
+        """
+        plan = plan_keystrokes(parse_story(fixture("example_sot.txt")))
+        self.assertTrue(any("park the monitor in D" in w for w in plan.warnings))

@@ -85,6 +85,18 @@ python3 -m newscast.capture launch                        # start Chrome with a 
 python3 -m newscast.capture doctor                        # what can this machine actually do?
 python3 -m newscast.capture page --out cnn.html --tab newsource
 python3 -m newscast.probe                                 # answer the open questions
+python3 -m newscast.collect --count 50 --keep 8            # a full collection run
+```
+
+`collect` is the end-to-end run: it pulls stubs off the wire, grades them against each other,
+culls to what a noon show can carry, fetches the script for each survivor, assembles §4
+markup, validates it, and writes the lot — including the keystrokes the Inception writer
+would type — to `collection-run.txt` beside the `.env`. **It writes nothing to Inception.**
+
+The same pipeline runs with no browser over saved captures, which is how it is tested:
+
+```bash
+python3 -m newscast.collect --from-html page1.html page2.html --keep 6
 ```
 
 `launch` starts Chrome detached on a separate profile and hands the terminal back. Log into

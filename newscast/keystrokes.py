@@ -168,6 +168,14 @@ def _emit_shot(plan: KeystrokePlan, cue: CameraCue, restoring: bool = False) -> 
                 "the monitor in D",
             )
         )
+    elif wants_d and token not in SHOT_APPENDS_D:
+        # The story needs the monitor in D (§5 R2) but this shot does not expand
+        # with -D, and how a producer adds it by hand is not recorded anywhere.
+        plan.warn(
+            f"{token} must park the monitor in D, but only "
+            f"{', '.join(sorted(SHOT_APPENDS_D))} expand with -D — how to add it "
+            "to this shot is not known, so a human has to"
+        )
 
 
 def _emit_anchor(plan: KeystrokePlan, cue: AnchorCue, config: ShowConfig) -> None:

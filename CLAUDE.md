@@ -516,6 +516,13 @@ None of these block the next milestone.
     the part a human reads. `newscast.probe` compares all of them on one story to find out
     which agree. *Still open: which source to trust for a package.*
 
+24. **How is the monitor parked in D on OX1 or OX2?** The previous
+    implementation backspaced away an auto-appended `-D` on OX3, OX4 and OX5, and did not on
+    OX2 — so those three expand with it and OX2 does not. But the §3 SOT example parks the
+    monitor in D on `CAM1 OX1`. Either OX1 behaves like OX3-5, or there is another way to add
+    it that is not written down. `plan_keystrokes` warns rather than guessing, so any story
+    needing D on OX1 or OX2 currently stops for a human.
+
 22. **Weather as a rundown element.** Weather occupies real time and appears in the rundown,
     but whether the agent ever writes or times one — or whether it is purely Inception's, like
     the birthday bump — is not settled. The rule engine already exempts `WEATHER` elements
