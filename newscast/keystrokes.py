@@ -49,8 +49,11 @@ ANCHOR_SHORTCUTS = {"DOUG": "1", "MEGAN": "2", "LINDA": "4", "JEFF": "5"}
 CG_SHORTCUT = "s"
 END_CHORD = ("alt", "command", "h")
 
-# Shot cues Inception auto-appends "-D" to, which then has to come off.
+# Shot cues Inception auto-appends "-D" to, which then has to come off when the
+# story does not park the monitor. Every other shot can still be parked in D
+# (§11.24) — the suffix just has to be typed rather than deleted.
 SHOT_APPENDS_D = frozenset({"OX3", "OX4", "OX5"})
+D_SUFFIX = "-D"
 
 # How long Inception needs to expand a bracket shortcut before more typing.
 EXPAND_PAUSE_SECONDS = 0.35
@@ -169,13 +172,9 @@ def _emit_shot(plan: KeystrokePlan, cue: CameraCue, restoring: bool = False) -> 
             )
         )
     elif wants_d and token not in SHOT_APPENDS_D:
-        # The story needs the monitor in D (§5 R2) but this shot does not expand
-        # with -D, and how a producer adds it by hand is not recorded anywhere.
-        plan.warn(
-            f"{token} must park the monitor in D, but only "
-            f"{', '.join(sorted(SHOT_APPENDS_D))} expand with -D — how to add it "
-            "to this shot is not known, so a human has to"
-        )
+        # Any camera and over-shoulder can be parked in D (§11.24). This shot
+        # just does not expand with -D on its own, so type the suffix.
+        plan.add(text(D_SUFFIX))
 
 
 def _emit_anchor(plan: KeystrokePlan, cue: AnchorCue, config: ShowConfig) -> None:

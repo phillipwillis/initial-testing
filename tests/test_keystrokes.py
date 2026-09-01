@@ -218,13 +218,13 @@ class StructureTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertEqual(plan_keystrokes(parse_story(fixture(name))).warnings, [])
 
-    def test_parking_the_monitor_in_d_on_ox1_or_ox2_is_an_open_question(self):
+    def test_a_shot_that_does_not_expand_with_d_gets_the_suffix_typed(self):
         """§11.24.
 
-        The previous implementation backspaced away an appended -D on OX3, OX4
-        and OX5, and did not on OX2 — so those three expand with it and OX2 does
-        not. The §3 SOT example parks the monitor in D on OX1, and how a
-        producer does that is not recorded anywhere. Warning beats guessing.
+        OX3, OX4 and OX5 expand with -D appended; the others do not. Any camera
+        and over-shoulder can still be parked in D, so a shot that does not
+        expand with it has the suffix typed instead.
         """
         plan = plan_keystrokes(parse_story(fixture("example_sot.txt")))
-        self.assertTrue(any("park the monitor in D" in w for w in plan.warnings))
+        self.assertEqual(plan.warnings, [])
+        self.assertIn("[OX1-D", plan.typed_text)

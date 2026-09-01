@@ -7,8 +7,9 @@ collection, ranking, slotting, script writing, and entry into the Inception CMS.
 the read-time estimator, and the §5 rule engine. No LLM and no network are involved yet.
 Everything from §6 phase 0 onward (collection, grading, slotting, Inception) is still the
 target, not the implementation. The §11 questions were answered on 2026-08-27 and the rule
-engine now enforces the real anchor pattern, shots, CG ceiling and monitor rule; §11.20 lists
-the three items still outstanding.
+engine now enforces the real anchor pattern, shots, CG ceiling and monitor rule. Follow-up
+answers landed on 2026-09-01 (§11.20); the two items still outstanding are both deferred, not
+blocking.
 
 ---
 
@@ -310,7 +311,21 @@ is a **constraint, not just a score component** — if no entertainment story ra
 final block still needs entertainment, so take the highest-scored entertainment-eligible
 story regardless of its absolute rank.
 
-Local stories placed by the human are fixed points; the agent fills around them.
+Local stories placed by the human are fixed points; the agent fills around them. **Wire
+stories fill the gaps the human's local stories leave** — that is the whole job of slotting.
+
+**Placement is tonal, not tabular (§11.27).** There is no rule that says a given kind of story
+belongs in a given block. A shooting is hard news that usually lands in B, but it moves with
+the day, and the model decides from what else is in the pool. What the model must produce for
+every surviving story is:
+
+- a **primary block** and a **backup block**, so a story that loses its slot has somewhere
+  to go rather than being re-graded from scratch; and
+- a **heaviness weight from 0 to 1** — a shooting is 0.9–1.0, a small business going under is
+  sad but lighter at 0.6–0.7.
+
+Within a block, heavier runs first. That is §2's "heavy to light" made numeric and therefore
+checkable.
 
 **Related rows merge; they are not culled.** CNN files one row per speaker, so a single arrest
 arrives as three rows — the FBI on the reward, the attorney on the party, the FBI again on the
@@ -321,6 +336,12 @@ VOSOTVOSOT for two, which §3 calls the largest form justifiable for a single st
 **Every soundbite keeps its own source.** The second bite lives under a different story number
 from the first, and losing that mapping means an editor cannot find the clip — which is what
 §5 R15 exists to prevent.
+
+**One SOT can hold more than one clip.** Two or even three clips can be cut together into a
+single soundbite, whether they are the same person speaking twice or several people from
+different sources (§11.26). That is a different move from the composite above: the composite
+gives a story two separate SOT segments with copy between them, while this gives one segment
+several sources. The editor note has to name each clip and its in/out points.
 
 ### Phase 3 — Deep research *(per selected story)*
 Now go get everything: full text, tags, keyword searches, and stories the wire marks as
@@ -369,10 +390,13 @@ The agent is only as good as its tools. Build these as discrete, individually te
 - `wire_search(query | tags | keywords)` → stubs
 - `wire_expand(story_id)` → full script, media refs, related items, soundbites
 
-**Media**
+**Media** *(built — see §15)*
 - `sot_timestamps(media_ref, speaker)` → in/out points for a person starting and finishing a
   section of speech. Output goes into the editor note alongside the source package reference,
   so the editor can find and pull the clip fast.
+- `transcribe_media(video)` → the transcript, and the video is deleted (§11.7).
+- `locate_bite(transcript, quote)` / `select_bite(transcript, target)` → a clip.
+- `trim_package(transcript, daypart_phrases, max_seconds)` → the package that survives.
 
 **Scripting**
 - `assemble_story(research, target_type, target_duration)` → script with cues
@@ -437,7 +461,8 @@ script gets run through it, and a violation rate is the primary quality metric.
 ## 11. Open questions
 
 **Answered 2026-08-27.** Everything below carries its answer. What is still outstanding is
-collected in §11.20 — three items, none of which block the next milestone.
+collected in §11.20, along with the follow-up answers from 2026-09-01. Two items are still
+open, both deferred by Phil, and neither blocks the next milestone.
 
 1. **Block time budgets.** ✅ The first half hour is **27:55**, the second is **32:00**. The A
    block runs roughly **5–7 minutes**. The C block in both half hours is back-timed to begin
@@ -490,7 +515,10 @@ collected in §11.20 — three items, none of which block the next milestone.
     RDR. Special bumps — weather bumps, the birthday bump — are a human's job, not the agent's.
 12. **Model + budget.** ✅ An Opus model for grading, for deciding the context-collection
     process, and for script writing. Expected per-show cost is **under $1** because tool use
-    collapses many calls into one or two; the hard limit is **$2**.
+    collapses many calls into one or two; the hard limit is **$2**. *Updated 2026-09-01:* the
+    **$2 ceiling still holds**, but development runs on **Haiku** (`claude-haiku-4-5`) to keep
+    experimentation cheap. The model is one setting, so moving to Opus for production is a
+    config change, not a rewrite.
 13. **R1 and packages.** ✅ Packages typically do not need to be put in D by their nature —
     a PKG is a single video file, so it does not on its own trip the two-file rule.
 14. **The §3 PKG example and R2.** ✅ The example is right and R2 was stated wrong. The real
@@ -506,42 +534,56 @@ collected in §11.20 — three items, none of which block the next milestone.
 19. **Read-rate calibration.** ✅ 160 wpm is a reasonable working number; tweak as the project
     continues.
 
-### 11.20 Still outstanding
+### 11.20 Answered later, and what is still outstanding
 
-None of these block the next milestone.
+Numbered in the order the questions were asked. Two are still open, and neither blocks the
+next milestone — both were explicitly deferred on 2026-09-01.
 
-20. **Break and weather durations.** §11.1 gives the half-hour totals and the A-block range,
-    but per-block budgets for B, C and D fall out only once the break and weather allowances
-    are known. Inception already holds these numbers. Until they arrive, R14 checks the A
-    blocks and reports the half-hour reconciliation as unconfigured.
-21. **Bump CG format.** §11.15 establishes that a bump CG is formatted differently from a
-    lower third, but not how — so R5 skips bump CGs rather than measuring them against the
-    39-character ceiling.
-23. **CNN's printed duration is not the running time.** ✅ Answered, and the answer is "do
-    not trust it". The script may run 20 seconds while the number CNN prints counts the
-    b-roll in the video file, and packages are the worst offenders. So `wire_duration_seconds`
-    is a sort key, never a TRT: a duration that reaches a rundown has to come from somewhere
-    else. The candidates are the media element's own duration, the `TRT:` field in the wire
-    script, and — for anchor copy — our own `estimate_read_time`, which is authoritative for
-    the part a human reads. `newscast.probe` compares all of them on one story to find out
-    which agree. *Still open: which source to trust for a package.*
-
-25. **Do related soundbite rows merge or compete?** ✅ Merge. CNN files a row per speaker;
-    they join into one story as a §3 composite, capped at two bites (VOSOTVOSOT), with each
-    bite carrying its own `[SOURCE: ...]`. Culling them lost material a producer would have
-    used. See §6 phase 2.
-
-24. **How is the monitor parked in D on OX1 or OX2?** The previous
-    implementation backspaced away an auto-appended `-D` on OX3, OX4 and OX5, and did not on
-    OX2 — so those three expand with it and OX2 does not. But the §3 SOT example parks the
-    monitor in D on `CAM1 OX1`. Either OX1 behaves like OX3-5, or there is another way to add
-    it that is not written down. `plan_keystrokes` warns rather than guessing, so any story
-    needing D on OX1 or OX2 currently stops for a human.
-
+20. **Break and weather durations.** ⏸ Deferred. §11.1 gives the half-hour totals and the
+    A-block range, but per-block budgets for B, C and D fall out only once the break and
+    weather allowances are known. Those numbers come with Inception; until then R14 checks the
+    A blocks and reports the half-hour reconciliation as unconfigured. *"Don't sweat it for
+    now, we'll handle exact timing later."*
+21. **Bump CG format.** ⏸ Deferred behind the CG system. §11.15 establishes that a bump CG is
+    formatted differently from a lower third, but not how — so R5 skips bump CGs rather than
+    measuring them against the 39-character ceiling. *"We need to get the CG system working
+    first before we do anything special."*
 22. **Weather as a rundown element.** Weather occupies real time and appears in the rundown,
     but whether the agent ever writes or times one — or whether it is purely Inception's, like
     the birthday bump — is not settled. The rule engine already exempts `WEATHER` elements
     from the CG, shot, and reader rules.
+23. **CNN's printed duration is not the running time.** ✅ Answered, and the answer is "do
+    not trust it". The script may run 20 seconds while the number CNN prints counts the
+    b-roll in the video file, and packages are the worst offenders. So `wire_duration_seconds`
+    is a sort key, never a TRT. **The authoritative duration comes from the transcript**
+    (§11.26): the video is transcribed with word timestamps, grouped into sentences, and the
+    in/out points of the sentences actually used give the real running time. For anchor copy
+    `estimate_read_time` remains authoritative, because that is the part a human reads.
+24. **How is the monitor parked in D on OX1 or OX2?** ✅ Any camera and any over-shoulder can
+    be parked in D — the shot makes no difference. What differs is only the keystrokes:
+    OX3, OX4 and OX5 expand with `-D` already appended (and it gets backspaced away when the
+    story does not want it), and every other shot has the suffix typed instead.
+    `plan_keystrokes` no longer stops for a human.
+25. **Do related soundbite rows merge or compete?** ✅ Merge. CNN files a row per speaker;
+    they join into one story as a §3 composite, capped at two bites (VOSOTVOSOT), with each
+    bite carrying its own `[SOURCE: ...]`. Culling them lost material a producer would have
+    used. See §6 phase 2.
+26. **Where do PKG and SOT durations come from, and how does trimming work?** ✅ From a
+    transcript, and trimming is the normal case rather than the exception. Two examples:
+    a package that opens "this morning" needs that intro taken off for a noon show, and a
+    wire that raw-dumps a five-minute interview needs a twenty-second clip pulled out of it.
+    The mechanism is the same in both cases — transcribe the video, divide it into sentences
+    with timestamps, and choose in/out points at sentence boundaries. That is where the
+    duration comes from too. Also: **a single SOT can hold two or three clips**, from one
+    person or from several people across different sources. See §15.
+27. **How does slotting decide where a story goes?** ✅ After ranking, wire stories fill the
+    time gaps the human producer's local stories leave. There is no strict "this kind of story
+    goes in this block" rule — the instructions are tonal, and the model decides from what
+    else is in the pool. A shooting is hard news that typically lands in B, but it moves with
+    the day. Mechanically: every surviving story gets a **primary and a backup block**, and a
+    **heaviness weight between 0 and 1** — a shooting is 0.9–1.0, a small business going
+    bankrupt is sad but lighter at 0.6–0.7 — and within a block the heavier story runs first.
+    This is §2's "heavy to light" made numeric.
 
 ---
 
@@ -573,6 +615,8 @@ does and where it is still guessing.
 | `newscast/rules.py` | R1–R15 plus X1–X5, one function per rule. |
 | `newscast/validator.py` | `validate_show()` (§8) and the violation-rate metric (§10). |
 | `newscast/cli.py` | `validate`, `summary`, `rules`, `readtime`. |
+| `newscast/transcript.py` | Sentences, clips, soundbites, trimming — the §15 pipeline's pure half. |
+| `newscast/media.py` | ffprobe/ffmpeg/ASR, and the §11.7 delete. The impure half. |
 
 `tests/fixtures/show_clean.txt` passes every rule; `show_broken.txt` breaks each one, and the
 test suite asserts that. 131 tests, `python3 -m unittest discover -s tests -t .`.
@@ -658,6 +702,7 @@ and read in a diff before it is ever sent. What it encodes, from the previous im
 | `[CAM2 OX3]` | `[OX3` · pause · ENTER · BACKSPACE×2 (Inception appends `-D`) |
 | `[CAM3 OX2]` | `[OX2` · pause · ENTER (no `-D` on this one) |
 | `[CAM2 OX3 - D]` | as above, keeping the appended `-D` |
+| `[CAM3 OX2 - D]` | `[OX2` · pause · ENTER · type `-D` (§11.24 — any shot can be parked in D) |
 | `[MEGAN]` | Option+2 |
 | `[JEFF]` | Option+5 |
 | `[CG: ...]` | Option+s |
@@ -716,3 +761,64 @@ Because the machine that can reach the wires is not the machine this code is wri
 Everything hard — finding rows, reading fields, building stubs — is therefore testable here,
 against saved HTML, with no browser and no credentials. Only navigation has to be debugged on
 the work machine, and navigation is the part that fails loudly rather than silently.
+
+---
+
+## 15. The transcript pipeline
+
+Answered 2026-09-01 (§11.26), and it settles §11.23 as well. **Every duration that comes off a
+video file comes from a transcript**, because neither of the other candidates can be trusted:
+CNN's printed number counts b-roll the script never covers, and the wire's script is sometimes
+an old one shipped against a revamped package (§11.7).
+
+### What it does
+
+1. Download the video, and read its real length with `ffprobe`. The gap between that number and
+   the spoken content is exactly the b-roll §11.23 warns about.
+2. Extract 16 kHz mono audio and run ASR with **word timestamps**.
+3. Group words into **sentences with start and end times**. Three things end a sentence:
+   terminal punctuation, a silence longer than a second, and running past a character cap.
+   The silence rule earns its place — interview subjects pause, and ASR punctuation over
+   broadcast audio is not dependable.
+4. Drop what ASR invents over silence and logo stings, and the repeat loops it falls into.
+5. **Delete the video** (§11.7). The agent does no editing; it needs the words and the
+   timestamps so an editor can find the clip, and nothing else.
+
+Everything downstream cuts **on sentence boundaries**. A producer never asks an editor for
+4.82 seconds of somebody mid-phrase.
+
+### The two jobs
+
+**Trimming a package.** A wire package that opens "this morning" is written for another show
+(R13), and the fix is to cut the sentence rather than rewrite it — the reporter's voice is in
+the file. Only *leading* sentences go: a "this morning" in the middle of the story is the news,
+not the daypart. If the package still runs long, whole sentences come off the tail, because
+the front carries the news and the back carries the wrap.
+
+**Cutting a soundbite.** Two cases:
+
+- The wire hands us the quote. `locate_bite()` finds where those words actually fall in the
+  transcript and takes the in/out points from there. A poor match means the script is stale,
+  and it returns nothing rather than a wrong in-point — visible beats silent.
+- The wire raw-dumps a five-minute interview. `select_bite()` picks the sentence run closest
+  to the target length, preferring the shorter of two equally close runs: a bite that runs
+  long costs the whole block, one that runs short costs only itself. Passing the sentences
+  already used gets a *different* bite for the second leg of a VOSOTVOSOT.
+
+**A SOT may hold two or three clips** (§11.26), from one speaker or from several people across
+different sources. `Soundbite` is a list of `Clip`s, each carrying its own source reference and
+its own editor note, because R15 says an editor has to be able to find every one of them.
+Past three it stops reading as a soundbite, so the extras are dropped rather than stacked.
+
+### Where the split falls
+
+| Module | |
+|---|---|
+| `newscast/transcript.py` | Pure. Sentences, clips, soundbites, matching, selection, trimming. No subprocess, no model, no network — all of it testable here. |
+| `newscast/media.py` | Impure and deliberately thin. `ffprobe`, `ffmpeg`, faster-whisper, and the §11.7 delete, which runs in a `finally` so a crash mid-transcription does not leave the file behind. |
+
+Same architecture as the collector (§14): the part that has to be debugged on the work machine
+stays small and fails loudly, and every decision worth testing is a pure function.
+
+`python3 -m newscast.capture doctor` now checks for `ffmpeg`, `ffprobe` and `faster-whisper`
+alongside Chrome and Selenium.

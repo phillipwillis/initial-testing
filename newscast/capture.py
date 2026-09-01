@@ -165,6 +165,22 @@ def doctor(port: int = DEFAULT_DEBUG_PORT) -> int:
     except ImportError:
         _no("selenium installed", "run: pip install selenium")
 
+    print("\nTranscript pipeline (§11.7)")
+    from .media import DEFAULT_ASR_MODEL, have
+
+    for binary, why in (("ffprobe", "reads a video's real duration"),
+                        ("ffmpeg", "extracts the audio ASR reads")):
+        if have(binary):
+            _ok(f"{binary} found", why)
+        else:
+            _no(f"{binary} not found", f"{why} — install ffmpeg")
+    try:
+        import faster_whisper  # noqa: F401
+
+        _ok("faster-whisper installed", f"model {DEFAULT_ASR_MODEL} downloads on first run")
+    except ImportError:
+        _no("faster-whisper installed", "run: pip install faster-whisper")
+
     print("\nChrome")
     chrome = find_chrome()
     if chrome:
