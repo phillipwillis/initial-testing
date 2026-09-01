@@ -823,7 +823,12 @@ Same architecture as the collector (§14): the part that has to be debugged on t
 stays small and fails loudly, and every decision worth testing is a pure function.
 
 `python3 -m newscast.capture doctor` now checks for `ffmpeg`, `ffprobe` and `faster-whisper`
-alongside Chrome and Selenium.
+alongside Chrome and Selenium, and `python3 -m newscast.transcribe <file>` runs the whole
+pipeline on one video and prints the sentences, a package trim and a soundbite pick.
+
+**Getting the file is still manual.** Nothing downloads video off Newsource yet — `probe`
+deliberately never clicks a download on a licensed account — so a video has to be pulled by
+hand and pointed at.
 
 ### What it changes in an assembled script
 
