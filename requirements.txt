@@ -1,0 +1,21 @@
+# §14 — the deliverable is a Python program run from a terminal on a locked-down
+# work machine, so every dependency needs a reason. Milestone 1 (the domain
+# model, the §4 markup, the read-time estimator and the §5 rule engine) has
+# none, and still runs with nothing installed. These are what the later phases
+# need, and each is optional: the pipeline degrades rather than failing when one
+# is missing.
+
+# §11.4, §14 — navigating and authenticating the wires. Selenium drives the
+# Chrome that is already installed and approved; Playwright would download and
+# manage its own browser binaries, which is what a work machine blocks.
+selenium>=4.20
+
+# §11.12 — grading and slotting. Development runs on Haiku; the model is one
+# setting. Without this the deterministic graders in newscast/scoring.py and
+# newscast/slotting.py run instead and the show still gets made.
+anthropic>=1.0
+
+# §11.7, §15 — the transcript is the authoritative duration for anything that
+# comes off a video file. Needs ffmpeg and ffprobe on PATH as well, which are
+# not pip-installable; `python3 -m newscast.capture doctor` checks for them.
+faster-whisper>=1.0

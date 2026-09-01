@@ -165,6 +165,25 @@ def doctor(port: int = DEFAULT_DEBUG_PORT) -> int:
     except ImportError:
         _no("selenium installed", "run: pip install selenium")
 
+    print("\nModel (§11.12)")
+    try:
+        import anthropic
+
+        _ok("anthropic installed", f"version {anthropic.__version__}")
+    except ImportError:
+        _no("anthropic installed", "run: pip install anthropic")
+    from .env import load_env
+    from .llm import API_KEY_NAME
+
+    values, env_path = load_env()
+    if values.get(API_KEY_NAME):
+        _ok(f"{API_KEY_NAME} is set", f"read from {env_path}")
+    else:
+        _info(
+            f"{API_KEY_NAME} is not in the .env",
+            "grading and slotting fall back to the deterministic versions",
+        )
+
     print("\nTranscript pipeline (§11.7)")
     from .media import DEFAULT_ASR_MODEL, have
 

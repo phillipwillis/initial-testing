@@ -617,6 +617,8 @@ does and where it is still guessing.
 | `newscast/cli.py` | `validate`, `summary`, `rules`, `readtime`. |
 | `newscast/transcript.py` | Sentences, clips, soundbites, trimming — the §15 pipeline's pure half. |
 | `newscast/media.py` | ffprobe/ffmpeg/ASR, and the §11.7 delete. The impure half. |
+| `newscast/slotting.py` | Primary/backup blocks, heaviness, and the fill (§11.27). |
+| `newscast/llm.py` | The two model calls and the §11.12 cost ceiling. |
 
 `tests/fixtures/show_clean.txt` passes every rule; `show_broken.txt` breaks each one, and the
 test suite asserts that. 131 tests, `python3 -m unittest discover -s tests -t .`.
@@ -822,3 +824,60 @@ stays small and fails loudly, and every decision worth testing is a pure functio
 
 `python3 -m newscast.capture doctor` now checks for `ffmpeg`, `ffprobe` and `faster-whisper`
 alongside Chrome and Selenium.
+
+---
+
+## 16. The model layer
+
+§11.12 answered twice. The **$2 hard ceiling stands**, expected spend is under a dollar, and
+development runs on **Haiku** (`claude-haiku-4-5`) to keep experimentation cheap. The model is
+one setting, so production is a config change rather than a rewrite.
+
+### Two calls, not many
+
+The budget only works because tool use collapses many decisions into one or two calls, so that
+is exactly what `newscast/llm.py` does:
+
+- **Grading** — the whole pool ranked against itself in one call (§7). Comparative by
+  construction; the model sees the pool and orders it.
+- **Slotting** — a primary block, a backup block and a heaviness weight for everything that
+  survives the cull (§11.27).
+
+Script writing is a third call, and it is not built yet.
+
+Both use a **forced tool call** rather than "reply with JSON". The schema is enforced by the
+API, so a malformed answer is a validation error instead of a parse that half-works.
+
+### The ceiling is enforced, not hoped for
+
+§12 says anything checkable is checked in code, and a dollar limit is checkable. `Budget`
+refuses a call whose **worst case** would pass the ceiling, counting `max_tokens` of output —
+because that is what the request authorises, and a ceiling checked against an optimistic
+estimate is not a ceiling. Spend is tracked from `response.usage` across the run, and going
+past the *expected* cost is noted even though it is allowed: a run that quietly costs $1.90
+every day is worth knowing about before the ceiling stops it.
+
+### Nothing here is required
+
+The SDK may not be installed and the key may not be in the `.env`. `producer()` returns None
+and a reason, and every caller falls back to `newscast/scoring.py` and `newscast/slotting.py`.
+That is why those exist as working deterministic graders rather than as scaffolding — a show
+goes on air at noon whatever the API did. A model that is over budget, unreachable, or
+returning nonsense falls back the same way, and the report says which one ran.
+
+The key lives in the same `.env` as the wire credentials, as `ANTHROPIC_API_KEY`. It is never
+logged, printed, or written into a report.
+
+**Not yet verified against the live API.** The request shapes are tested against a fake client
+and the SDK's own signatures; nothing has made a real call, because no key has been added yet.
+
+### Running it
+
+```
+python3 -m newscast.collect --count 50 --keep 8            # Haiku, $2 ceiling
+python3 -m newscast.collect --model claude-opus-5          # production model
+python3 -m newscast.collect --no-llm                       # deterministic, spends nothing
+```
+
+`--ceiling` moves the limit. `python3 -m newscast.capture doctor` reports whether the SDK is
+installed and whether the key is in the `.env`.

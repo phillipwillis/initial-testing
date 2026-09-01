@@ -41,6 +41,7 @@ from newscast.capture import DEFAULT_DEBUG_PORT, attach, scrub_html
 from newscast.config import ShowConfig
 from newscast.env import describe, load_env, require
 from newscast.keystrokes import plan_keystrokes
+from newscast.llm import DEV_MODEL, Producer, producer as make_producer
 from newscast.model import Block, Show
 from newscast.scoring import (
     Grade,
@@ -62,6 +63,39 @@ REQUIRED_KEYS = ("CNN_USER", "CNN_PASS")
 # The gap the agent may fill in each block. An assumption, and labelled as one
 # wherever it reaches a report — the real holes come from the rundown (§11.20).
 DEMO_HOLE_SECONDS = 150.0
+
+
+def graded(stubs: list[StoryStub], prod: Optional[Producer]) -> tuple[list, str]:
+    """Grade the pool with the model if there is one, the heuristic if not.
+
+    Never lets a grading failure end the run. A show goes on air at noon
+    whatever the API did, so a model that is over budget, unreachable or
+    returning nonsense falls back to `newscast.scoring` and the report says so.
+    """
+    if prod is None:
+        return grade_pool(stubs), ""
+    try:
+        grades = prod.grade_pool(stubs)
+        grades.sort(key=lambda g: g.total, reverse=True)
+        return grades, ""
+    except Exception as exc:
+        return grade_pool(stubs), (
+            f"the model grader failed ({type(exc).__name__}: {exc}) — "
+            "graded with the deterministic fallback instead"
+        )
+
+
+def placed(groups: list[StoryGroup], prod: Optional[Producer]) -> tuple[dict, str]:
+    """Model placements keyed by slug, or none and a reason (§11.27)."""
+    if prod is None:
+        return {}, ""
+    try:
+        return prod.place_pool(groups), ""
+    except Exception as exc:
+        return {}, (
+            f"the model slotter failed ({type(exc).__name__}: {exc}) — "
+            "placed with the deterministic fallback instead"
+        )
 
 
 def log(step: str, message: str = "", **extra) -> None:
@@ -210,6 +244,7 @@ def run(
     keep: int,
     out_path: str,
     config: ShowConfig | None = None,
+    prod: Optional[Producer] = None,
 ) -> str:
     config = config or ShowConfig()
 
@@ -217,7 +252,9 @@ def run(
     if not stubs:
         raise SystemExit("no stories collected — is the listing empty or the session out?")
 
-    grades = grade_pool(stubs)
+    grades, grade_note = graded(stubs, prod)
+    if grade_note:
+        log("grade", grade_note)
     groups = group_related(grades)
     merged = sum(len(g.related) for g in groups)
     log("grade", "ranked and grouped", stories=len(groups), merged_rows=merged,
@@ -261,8 +298,15 @@ def run(
                 item.error = f"assembly failed: {type(exc).__name__}: {exc}"
         collected.append(item)
 
-    text = write_report(collected, culled, stubs, out_path, config)
-    return text
+    overrides, place_note = placed(culled.kept, prod)
+    if place_note:
+        log("slot", place_note)
+
+    return write_report(
+        collected, culled, stubs, out_path, config,
+        overrides=overrides, prod=prod,
+        notes=[n for n in (grade_note, place_note) if n],
+    )
 
 
 # --------------------------------------------------------------------------
@@ -280,9 +324,12 @@ def write_report(
     pool: list[StoryStub],
     out_path: str,
     config: ShowConfig,
+    overrides: dict | None = None,
+    prod: Optional[Producer] = None,
+    notes: list[str] | None = None,
 ) -> str:
     built = [c for c in collected if c.assembly]
-    placements = place_pool(culled.kept)
+    placements = place_pool(culled.kept, overrides)
     fill = fill_holes(placements, demo_holes(DEMO_HOLE_SECONDS, config), config)
     show = Show(blocks=[Block(half=1, label="A", stories=[c.assembly.story for c in built])])
     report = validate_show(show, config)
@@ -300,8 +347,19 @@ def write_report(
     add(f"dropped     {len(culled.dropped)}")
     add(f"assembled   {len(built)}")
     add("")
-    add("Grading is newscast.scoring, a deterministic stand-in for the Opus grader")
-    add("§11.12 calls for. Copy is not rewritten: the wire's words go through as")
+    if prod is not None:
+        add(f"grading and slotting ran on {prod.budget.model} (§11.12)")
+        add(f"cost        {prod.budget.report()}")
+        for note in prod.budget.notes:
+            add(f"            ! {note}")
+    else:
+        add("No model ran. Grading is newscast.scoring and slotting is")
+        add("newscast.slotting — deterministic stand-ins for the calls §11.12")
+        add("describes, which is why they exist rather than scaffolding.")
+    for note in notes or []:
+        add(f"            ! {note}")
+    add("")
+    add("Copy is not rewritten either way: the wire's words go through as")
     add("written, with an editor note wherever a human has to look.")
     add("")
 
@@ -448,7 +506,11 @@ def write_report(
 
 
 def run_offline(
-    html_paths: list[str], keep: int, out_path: str, config: ShowConfig | None = None
+    html_paths: list[str],
+    keep: int,
+    out_path: str,
+    config: ShowConfig | None = None,
+    prod: Optional[Producer] = None,
 ) -> str:
     """The same pipeline over saved captures, with no browser.
 
@@ -489,7 +551,10 @@ def run_offline(
     log("offline", "loaded", captures=len(html_paths), stubs=len(unique),
         scripts=len(scripts))
 
-    groups = group_related(grade_pool(unique))
+    grades, grade_note = graded(unique, prod)
+    if grade_note:
+        log("grade", grade_note)
+    groups = group_related(grades)
     merged = sum(len(g.related) for g in groups)
     log("grade", "ranked and grouped", stories=len(groups), merged_rows=merged)
 
@@ -522,7 +587,15 @@ def run_offline(
                 item.error = f"assembly failed: {type(exc).__name__}: {exc}"
         collected.append(item)
 
-    return write_report(collected, culled, unique, out_path, config)
+    overrides, place_note = placed(culled.kept, prod)
+    if place_note:
+        log("slot", place_note)
+
+    return write_report(
+        collected, culled, unique, out_path, config,
+        overrides=overrides, prod=prod,
+        notes=[n for n in (grade_note, place_note) if n],
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -540,15 +613,38 @@ def main(argv: list[str] | None = None) -> int:
         metavar="FILE",
         help="run the pipeline over saved captures instead of the live site",
     )
+    parser.add_argument(
+        "--model",
+        default=DEV_MODEL,
+        help=f"grading and slotting model (§11.12; default {DEV_MODEL})",
+    )
+    parser.add_argument(
+        "--ceiling",
+        type=float,
+        default=2.00,
+        help="hard cost ceiling for the run in dollars (§11.12; default 2.00)",
+    )
+    parser.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="use the deterministic grader and slotter, and spend nothing",
+    )
     args = parser.parse_args(argv)
+
+    values, env_path = load_env(args.env_file)
+
+    prod = None
+    if not args.no_llm:
+        prod, why = make_producer(values, model=args.model, ceiling=args.ceiling)
+        log("model", f"{args.model}, ceiling ${args.ceiling:.2f}" if prod
+            else f"not used — {why}")
 
     if args.from_html:
         out_path = args.out or "collection-run.txt"
-        run_offline(args.from_html, args.keep, out_path)
+        run_offline(args.from_html, args.keep, out_path, prod=prod)
         print(f"\nwrote {os.path.abspath(out_path)}\n")
         return 0
 
-    values, env_path = load_env(args.env_file)
     log("env", f"read {env_path}" if env_path else "no .env found; using the environment")
     print(describe(values, REQUIRED_KEYS))
     missing = require(values, *REQUIRED_KEYS)
@@ -568,7 +664,7 @@ def main(argv: list[str] | None = None) -> int:
             "in the open window and run this again."
         )
 
-    run(driver, args.count, args.keep, out_path)
+    run(driver, args.count, args.keep, out_path, prod=prod)
     print(f"\nwrote {os.path.abspath(out_path)}\n")
     return 0
 
